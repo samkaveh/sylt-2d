@@ -129,3 +129,32 @@ impl Joint {
         self.p = self.p + impulse;
     }
 }
+
+#[cfg(feature = "log")]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct JointLog {
+    pub body1_id: usize,
+    pub body2_id: usize,
+    pub local_anchor_1: Vec2,
+    pub local_anchor_2: Vec2,
+    pub accumulated_impulse: Vec2,
+    pub softness: f32,
+    pub bias_factor: f32,
+}
+
+#[cfg(feature = "log")]
+impl Joint {
+    pub fn to_log(&self) -> JointLog {
+        let body1 = self.body_1.borrow();
+        let body2 = self.body_2.borrow();
+        JointLog {
+            body1_id: body1.id,
+            body2_id: body2.id,
+            local_anchor_1: self.local_anchor_1,
+            local_anchor_2: self.local_anchor_2,
+            accumulated_impulse: self.p,
+            softness: self.softness,
+            bias_factor: self.bias_factor,
+        }
+    }
+}

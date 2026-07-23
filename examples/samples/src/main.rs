@@ -3,6 +3,8 @@ use nannou_egui::{self, egui, Egui};
 use sylt_2d::body::{Body, ConvexPolygon, Shape};
 use sylt_2d::joint::Joint;
 use sylt_2d::math_utils::{Mat2x2, Vec2};
+use sylt_2d::log::Logger;
+use sylt_2d::metaball::{marching_squares, Metaball};
 use sylt_2d::world::World;
 fn main() {
     nannou::app(model).update(update).run();
@@ -12,6 +14,10 @@ const ITERATIONS: u32 = 100;
 struct EguiSettings {
     scale: f32,
     color: Srgb<u8>,
+    metaball_threshold: f32,
+    metaball_resolution: usize,
+    metaball_strength: f32,
+    metaball_radius: f32,
 }
 
 struct Model {
@@ -24,6 +30,8 @@ struct Model {
     settings: EguiSettings,
     is_first_frame: bool,
     load_demo_flag: bool,
+    metaball_bodies: Vec<usize>,
+    logging_enabled: bool,
 }
 
 fn model(app: &App) -> Model {
@@ -47,9 +55,15 @@ fn model(app: &App) -> Model {
         settings: EguiSettings {
             scale: 18.0,
             color: WHITE,
+            metaball_threshold: 0.5,
+            metaball_resolution: 50,
+            metaball_strength: 1.0,
+            metaball_radius: 1.0,
         },
         is_first_frame: true,
         load_demo_flag: false,
+        metaball_bodies: Vec::new(),
+        logging_enabled: false,
     }
 }
 
@@ -390,6 +404,24 @@ fn demo10(_model: &mut Model) {
     _model.world.add_joint(joint);
 }
 
+fn demo11(model: &mut Model) {
+    let mut ground = Body::new(Vec2::new(100.0, 20.0), f32::MAX);
+    ground.friction = 0.2;
+    ground.position = Vec2::new(0.0, -0.5 * ground.width.y);
+    model.world.add_body(ground.clone());
+
+    model.metaball_bodies.clear();
+
+    for i in 0..6 {
+        let radius = model.settings.metaball_radius;
+        let mut body = Body::new_circle(radius, 1.0);
+        body.friction = 0.3;
+        body.position = Vec2::new(-3.0 + i as f32 * 1.2, 8.0 + i as f32 * 0.5);
+        model.metaball_bodies.push(body.id);
+        model.world.add_body(body);
+    }
+}
+
 fn update(_app: &App, _model: &mut Model, _update: Update) {
     if _model.is_first_frame {
         let step = _model.world.step(_model.time_step);
@@ -431,6 +463,7 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
         "Demo 8: Dominos",
         "Demo 9: Multi-pendulum",
         "Demo 10: A Pawn and the pendulum",
+        "Demo 11: Metaballs",
     ];
     egui::Window::new("Settings").show(&ctx, |ui| {
         // Dropdown for selecting the demo
@@ -475,6 +508,28 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
             &mut _model.world.world_context.accumulate_impulse,
             "Enable/Disable accumulation of impulse.",
         );
+
+        if _model.demo_index == 10 {
+            ui.separator();
+            ui.label("Metaball Settings:");
+            ui.add(egui::Slider::new(&mut settings.metaball_threshold, 0.1..=2.0).text("Threshold"));
+            ui.add(egui::Slider::new(&mut settings.metaball_resolution, 20..=100).text("Resolution"));
+            ui.add(egui::Slider::new(&mut settings.metaball_strength, 0.1..=5.0).text("Strength"));
+            ui.add(egui::Slider::new(&mut settings.metaball_radius, 0.3..=2.0).text("Radius"));
+        }
+
+        ui.separator();
+        let was_logging = _model.logging_enabled;
+        ui.checkbox(&mut _model.logging_enabled, "Enable JSON logging to file");
+        if _model.logging_enabled && !was_logging {
+            let logger = Logger::new("sylt2d_log.jsonl");
+            _model.world.set_logger(logger);
+            println!("JSON logging enabled -> sylt2d_log.jsonl");
+        }
+        if !_model.logging_enabled && was_logging {
+            _model.world.logger = None;
+            println!("JSON logging disabled");
+        }
     });
 }
 
@@ -492,6 +547,7 @@ fn load_demo(model: &mut Model) {
         7 => demo8(model),
         8 => demo9(model),
         9 => demo10(model),
+        10 => demo11(model),
         _ => {}
     }
 }
@@ -522,6 +578,43 @@ fn view(app: &App, _model: &Model, frame: Frame) {
     let draw = draw.scale(_model.settings.scale);
     let settings = &_model.settings;
     draw.background().color(SLATEGREY);
+
+    if _model.demo_index == 10 {
+        let metaballs: Vec<Metaball> = _model
+            .world
+            .iter_bodies()
+            .filter(|b| b.shape == Shape::Circle && _model.metaball_bodies.contains(&b.id))
+            .map(|b| {
+                Metaball::new(
+                    Vec2::new(b.position.x, b.position.y),
+                    b.radius * 2.0,
+                    settings.metaball_strength,
+                )
+            })
+            .collect();
+
+        if !metaballs.is_empty() {
+            let bounds_min = Vec2::new(-15.0, -5.0);
+            let bounds_max = Vec2::new(15.0, 20.0);
+            let polygons = marching_squares(
+                &metaballs,
+                bounds_min,
+                bounds_max,
+                settings.metaball_resolution,
+                settings.metaball_threshold,
+            );
+
+            for poly in &polygons {
+                if poly.len() >= 3 {
+                    draw.polygon()
+                        .x_y(0.0, 0.0)
+                        .color(rgba(0.2, 0.8, 0.4, 0.7))
+                        .points(poly.clone());
+                }
+            }
+        }
+    }
+
     for (num, body) in _model.world.iter_bodies().enumerate() {
         match body.shape {
             Shape::Box => {
@@ -543,6 +636,19 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                     .x_y(body.position.x, body.position.y)
                     .rotate(body.rotation)
                     .points(tuples);
+            }
+            Shape::Circle => {
+                if _model.demo_index == 10 {
+                    draw.ellipse()
+                        .x_y(body.position.x, body.position.y)
+                        .w_h(body.radius * 2.0, body.radius * 2.0)
+                        .color(rgba(0.3, 0.6, 0.9, 0.3));
+                } else {
+                    draw.ellipse()
+                        .x_y(body.position.x, body.position.y)
+                        .w_h(body.radius * 2.0, body.radius * 2.0)
+                        .color(if num == 0 { DARKSEAGREEN } else { ORCHID });
+                }
             }
         }
     }

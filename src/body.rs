@@ -172,14 +172,17 @@ impl ConvexPolygon {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "log", derive(serde::Serialize))]
 pub enum Shape {
     #[default]
     Box,
     ConvexPolygon,
+    Circle,
 }
 
 #[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "log", derive(serde::Serialize))]
 pub struct Body {
     pub id: usize,
     pub position: Vec2,
@@ -196,6 +199,7 @@ pub struct Body {
     pub inv_moi: f32,
     vertices: Vec<Vec2>,
     pub shape: Shape,
+    pub radius: f32,
 }
 
 static BODY_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -241,6 +245,7 @@ impl Body {
             moi,
             vertices,
             shape: Shape::Box,
+            radius: 0.0,
         }
     }
     pub fn new_polygon(vertices: Vec<Vec2>, mass: f32) -> Self {
@@ -280,6 +285,45 @@ impl Body {
             moi,
             vertices,
             shape: Shape::ConvexPolygon,
+            radius: 0.0,
+        }
+    }
+
+    pub fn new_circle(radius: f32, mass: f32) -> Self {
+        let inv_mass;
+        let inv_moi;
+        let moi;
+        if mass < f32::MAX {
+            inv_mass = 1.0 / mass;
+            moi = 0.5 * mass * radius * radius;
+            inv_moi = 1.0 / moi;
+        } else {
+            inv_mass = 0.0;
+            moi = f32::MAX;
+            inv_moi = 0.0;
+        }
+        let width = Vec2::new(radius * 2.0, radius * 2.0);
+        let vertices = Vec::new();
+
+        let id = BODY_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+        Self {
+            id,
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            velocity: Vec2::new(0.0, 0.0),
+            angular_velocity: 0.0,
+            force: Vec2::new(0.0, 0.0),
+            torque: 0.0,
+            friction: 0.0,
+            width,
+            mass,
+            inv_mass,
+            inv_moi,
+            moi,
+            vertices,
+            shape: Shape::Circle,
+            radius,
         }
     }
 

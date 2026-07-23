@@ -1,9 +1,13 @@
 pub mod arbiter;
 pub mod body;
 pub mod collide;
+pub mod collide_circle;
 pub mod collide_polygon;
 pub mod draw;
 pub mod errors;
 pub mod joint;
+#[cfg(feature = "log")]
+pub mod log;
 pub mod math_utils;
+pub mod metaball;
 pub mod world;

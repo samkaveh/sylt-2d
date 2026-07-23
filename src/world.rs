@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::slice::Iter;
 
+#[cfg(feature = "log")]
+use crate::log::Logger;
+
 #[derive(Clone, Copy)]
 pub struct WorldContext {
     pub accumulate_impulse: bool,
@@ -21,6 +24,8 @@ pub struct World {
     pub bodies: Vec<Rc<RefCell<Body>>>,
     pub joints: Vec<Joint>,
     pub arbiters: HashMap<ArbiterKey, Arbiter>,
+    #[cfg(feature = "log")]
+    pub logger: Option<Logger>,
 }
 
 pub struct BodiesIter<'a> {
@@ -47,6 +52,8 @@ impl World {
             bodies: Vec::<Rc<RefCell<Body>>>::with_capacity(2),
             joints: Vec::<Joint>::with_capacity(2),
             arbiters: HashMap::<ArbiterKey, Arbiter>::new(),
+            #[cfg(feature = "log")]
+            logger: None,
         }
     }
 
@@ -68,6 +75,11 @@ impl World {
         self.bodies.clear();
         self.joints.clear();
         self.arbiters.clear();
+    }
+
+    #[cfg(feature = "log")]
+    pub fn set_logger(&mut self, logger: Logger) {
+        self.logger = Some(logger);
     }
 
     pub fn broad_phase(&mut self) -> Result<(), Sylt2DErrors> {
@@ -148,6 +160,21 @@ impl World {
             body.force = Vec2::default();
             body.torque = 0.0;
         }
+
+        #[cfg(feature = "log")]
+        if let Some(ref mut logger) = self.logger {
+            let arbiters_log: Vec<_> = self.arbiters.values().map(|a| a.to_log()).collect();
+            let joints_log: Vec<_> = self.joints.iter().map(|j| j.to_log()).collect();
+            logger.log_step(
+                dt,
+                self.gravity,
+                &self.world_context,
+                &self.bodies,
+                &arbiters_log,
+                &joints_log,
+            );
+        }
+
         Ok(())
     }
 }

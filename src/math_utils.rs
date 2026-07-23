@@ -21,6 +21,7 @@ impl Display for MathErrors {
 impl std::error::Error for MathErrors {}
 
 #[derive(Debug, Default, PartialOrd, Clone, Copy)]
+#[cfg_attr(feature = "log", derive(serde::Serialize))]
 pub struct Vec2 {
     pub x: f32,
     pub y: f32,

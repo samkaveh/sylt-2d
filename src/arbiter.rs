@@ -1,4 +1,5 @@
 use crate::body::Shape;
+use crate::collide_circle::{collide_circle_circle, collide_circle_polygon};
 use crate::collide_polygon::collide_polygons;
 use crate::math_utils::Cross;
 use crate::world::WorldContext;
@@ -25,6 +26,7 @@ impl fmt::Display for ArbiterErrors {
 impl std::error::Error for ArbiterErrors {}
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "log", derive(serde::Serialize))]
 pub enum EdgeNumbers {
     NoEdge = 0,
     Edge1,
@@ -34,6 +36,7 @@ pub enum EdgeNumbers {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "log", derive(serde::Serialize))]
 pub struct Edges {
     pub in_edge_1: EdgeNumbers,
     pub out_edge_1: EdgeNumbers,
@@ -53,6 +56,7 @@ impl Default for Edges {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
+#[cfg_attr(feature = "log", derive(serde::Serialize))]
 pub struct FeaturePair {
     pub edges: Edges,
     pub value: i32,
@@ -67,6 +71,7 @@ impl FeaturePair {
 pub type Contact = Option<ContactInfo>;
 
 #[derive(Debug, Default, Clone, Copy)]
+#[cfg_attr(feature = "log", derive(serde::Serialize))]
 pub struct ContactInfo {
     pub position: Vec2,
     pub normal: Vec2,
@@ -123,6 +128,15 @@ impl Arbiter {
 
         let num_contacts = match (body_1.borrow().shape, body_2.borrow().shape) {
             (Shape::Box, Shape::Box) => collide(&mut contacts, &body_1.borrow(), &body_2.borrow()),
+            (Shape::Circle, Shape::Circle) => {
+                collide_circle_circle(&mut contacts, &body_1.borrow(), &body_2.borrow())
+            }
+            (Shape::Circle, Shape::Box) | (Shape::Circle, Shape::ConvexPolygon) => {
+                collide_circle_polygon(&mut contacts, &body_1.borrow(), &body_2.borrow())
+            }
+            (Shape::Box, Shape::Circle) | (Shape::ConvexPolygon, Shape::Circle) => {
+                collide_circle_polygon(&mut contacts, &body_2.borrow(), &body_1.borrow())
+            }
             _ => collide_polygons(&mut contacts, &body_1.borrow(), &body_2.borrow()),
         };
         let friction = f32::sqrt(body_1.borrow().friction * body_2.borrow().friction);
@@ -294,6 +308,54 @@ impl Arbiter {
                 }
                 None => (),
             }
+        }
+    }
+}
+
+#[cfg(feature = "log")]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ArbiterLog {
+    pub body1_id: usize,
+    pub body2_id: usize,
+    pub friction: f32,
+    pub num_contacts: i32,
+    pub contacts: Vec<ContactLog>,
+}
+
+#[cfg(feature = "log")]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ContactLog {
+    pub position: Vec2,
+    pub normal: Vec2,
+    pub separation: f32,
+    pub pn: f32,
+    pub pt: f32,
+    pub pnb: f32,
+}
+
+#[cfg(feature = "log")]
+impl Arbiter {
+    pub fn to_log(&self) -> ArbiterLog {
+        let body1 = self.body1.borrow();
+        let body2 = self.body2.borrow();
+        let contacts = self
+            .contacts
+            .iter()
+            .filter_map(|c| c.map(|c| ContactLog {
+                position: c.position,
+                normal: c.normal,
+                separation: c.separation,
+                pn: c.pn,
+                pt: c.pt,
+                pnb: c.pnb,
+            }))
+            .collect();
+        ArbiterLog {
+            body1_id: body1.id,
+            body2_id: body2.id,
+            friction: self.friction,
+            num_contacts: self.num_contacts,
+            contacts,
         }
     }
 }
