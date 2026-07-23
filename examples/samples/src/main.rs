@@ -4,7 +4,7 @@ use sylt_2d::body::{Body, ConvexPolygon, Shape};
 use sylt_2d::joint::Joint;
 use sylt_2d::math_utils::{Mat2x2, Vec2};
 use sylt_2d::log::Logger;
-use sylt_2d::metaball::{marching_squares, Metaball};
+use sylt_2d::metaball::{marching_squares_debug, Metaball, compute_metaball_bounds};
 use sylt_2d::world::World;
 fn main() {
     nannou::app(model).update(update).run();
@@ -18,6 +18,12 @@ struct EguiSettings {
     metaball_resolution: usize,
     metaball_strength: f32,
     metaball_radius: f32,
+    debug_show_grid: bool,
+    debug_show_heatmap: bool,
+    debug_show_segments: bool,
+    debug_show_polygons: bool,
+    debug_show_open_chains: bool,
+    debug_show_case_labels: bool,
 }
 
 struct Model {
@@ -59,6 +65,12 @@ fn model(app: &App) -> Model {
             metaball_resolution: 50,
             metaball_strength: 1.0,
             metaball_radius: 1.0,
+            debug_show_grid: false,
+            debug_show_heatmap: false,
+            debug_show_segments: false,
+            debug_show_polygons: false,
+            debug_show_open_chains: false,
+            debug_show_case_labels: false,
         },
         is_first_frame: true,
         load_demo_flag: false,
@@ -412,14 +424,59 @@ fn demo11(model: &mut Model) {
 
     model.metaball_bodies.clear();
 
+    let radius = model.settings.metaball_radius;
+    let spacing = radius * 2.5;
     for i in 0..6 {
-        let radius = model.settings.metaball_radius;
         let mut body = Body::new_circle(radius, 1.0);
         body.friction = 0.3;
-        body.position = Vec2::new(-3.0 + i as f32 * 1.2, 8.0 + i as f32 * 0.5);
+        body.position = Vec2::new(-spacing * 2.5 + i as f32 * spacing, 8.0 + i as f32 * 0.5);
         model.metaball_bodies.push(body.id);
         model.world.add_body(body);
     }
+}
+
+fn demo12(model: &mut Model) {
+    let mut ground = Body::new(Vec2::new(100.0, 20.0), f32::MAX);
+    ground.friction = 0.2;
+    ground.position = Vec2::new(0.0, -0.5 * ground.width.y);
+    model.world.add_body(ground.clone());
+
+    model.metaball_bodies.clear();
+
+    let radius = model.settings.metaball_radius;
+    let mut body1 = Body::new_circle(radius, 1.0);
+    body1.friction = 0.3;
+    body1.position = Vec2::new(-1.5, 3.0);
+    model.metaball_bodies.push(body1.id);
+    model.world.add_body(body1);
+
+    let mut body2 = Body::new_circle(radius, 1.0);
+    body2.friction = 0.3;
+    body2.position = Vec2::new(1.5, 3.0);
+    model.metaball_bodies.push(body2.id);
+    model.world.add_body(body2);
+}
+
+fn demo13(model: &mut Model) {
+    let mut ground = Body::new(Vec2::new(100.0, 20.0), f32::MAX);
+    ground.friction = 0.2;
+    ground.position = Vec2::new(0.0, -0.5 * ground.width.y);
+    model.world.add_body(ground.clone());
+
+    model.metaball_bodies.clear();
+
+    let radius = model.settings.metaball_radius;
+    let mut body1 = Body::new_circle(radius, 1.0);
+    body1.friction = 0.3;
+    body1.position = Vec2::new(-1.5, 5.0);
+    model.metaball_bodies.push(body1.id);
+    model.world.add_body(body1);
+
+    let mut body2 = Body::new_circle(radius, 1.0);
+    body2.friction = 0.3;
+    body2.position = Vec2::new(1.5, 5.0);
+    model.metaball_bodies.push(body2.id);
+    model.world.add_body(body2);
 }
 
 fn update(_app: &App, _model: &mut Model, _update: Update) {
@@ -509,13 +566,21 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
             "Enable/Disable accumulation of impulse.",
         );
 
-        if _model.demo_index == 10 {
+    if _model.demo_index >= 10 {
             ui.separator();
             ui.label("Metaball Settings:");
             ui.add(egui::Slider::new(&mut settings.metaball_threshold, 0.1..=2.0).text("Threshold"));
             ui.add(egui::Slider::new(&mut settings.metaball_resolution, 20..=100).text("Resolution"));
             ui.add(egui::Slider::new(&mut settings.metaball_strength, 0.1..=5.0).text("Strength"));
             ui.add(egui::Slider::new(&mut settings.metaball_radius, 0.3..=2.0).text("Radius"));
+            ui.separator();
+            ui.label("Debug Overlays:");
+            ui.checkbox(&mut settings.debug_show_grid, "Show Grid");
+            ui.checkbox(&mut settings.debug_show_heatmap, "Show Heatmap");
+            ui.checkbox(&mut settings.debug_show_segments, "Show Segments");
+            ui.checkbox(&mut settings.debug_show_polygons, "Show Polygons");
+            ui.checkbox(&mut settings.debug_show_open_chains, "Show Open Chains");
+            ui.checkbox(&mut settings.debug_show_case_labels, "Show Case Labels");
         }
 
         ui.separator();
@@ -548,6 +613,8 @@ fn load_demo(model: &mut Model) {
         8 => demo9(model),
         9 => demo10(model),
         10 => demo11(model),
+        11 => demo12(model),
+        12 => demo13(model),
         _ => {}
     }
 }
@@ -579,42 +646,6 @@ fn view(app: &App, _model: &Model, frame: Frame) {
     let settings = &_model.settings;
     draw.background().color(SLATEGREY);
 
-    if _model.demo_index == 10 {
-        let metaballs: Vec<Metaball> = _model
-            .world
-            .iter_bodies()
-            .filter(|b| b.shape == Shape::Circle && _model.metaball_bodies.contains(&b.id))
-            .map(|b| {
-                Metaball::new(
-                    Vec2::new(b.position.x, b.position.y),
-                    b.radius * 2.0,
-                    settings.metaball_strength,
-                )
-            })
-            .collect();
-
-        if !metaballs.is_empty() {
-            let bounds_min = Vec2::new(-15.0, -5.0);
-            let bounds_max = Vec2::new(15.0, 20.0);
-            let polygons = marching_squares(
-                &metaballs,
-                bounds_min,
-                bounds_max,
-                settings.metaball_resolution,
-                settings.metaball_threshold,
-            );
-
-            for poly in &polygons {
-                if poly.len() >= 3 {
-                    draw.polygon()
-                        .x_y(0.0, 0.0)
-                        .color(rgba(0.2, 0.8, 0.4, 0.7))
-                        .points(poly.clone());
-                }
-            }
-        }
-    }
-
     for (num, body) in _model.world.iter_bodies().enumerate() {
         match body.shape {
             Shape::Box => {
@@ -638,16 +669,140 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                     .points(tuples);
             }
             Shape::Circle => {
-                if _model.demo_index == 10 {
-                    draw.ellipse()
-                        .x_y(body.position.x, body.position.y)
-                        .w_h(body.radius * 2.0, body.radius * 2.0)
-                        .color(rgba(0.3, 0.6, 0.9, 0.3));
+                if _model.demo_index >= 10 {
+                    // Skip individual circle rendering; metaball contour replaces it
                 } else {
                     draw.ellipse()
                         .x_y(body.position.x, body.position.y)
                         .w_h(body.radius * 2.0, body.radius * 2.0)
                         .color(if num == 0 { DARKSEAGREEN } else { ORCHID });
+                }
+            }
+        }
+    }
+
+        if _model.demo_index >= 10 {
+        let metaballs: Vec<Metaball> = _model
+            .world
+            .iter_bodies()
+            .filter(|b| b.shape == Shape::Circle && _model.metaball_bodies.contains(&b.id))
+            .map(|b| {
+                Metaball::new(
+                    Vec2::new(b.position.x, b.position.y),
+                    b.radius * 2.0,
+                    settings.metaball_strength,
+                )
+            })
+            .collect();
+
+        if !metaballs.is_empty() {
+            let (bounds_min, bounds_max) = compute_metaball_bounds(
+                &metaballs,
+                settings.metaball_threshold,
+                3.0,
+            );
+
+            let debug = marching_squares_debug(
+                &metaballs,
+                bounds_min,
+                bounds_max,
+                settings.metaball_resolution,
+                settings.metaball_threshold,
+            );
+
+            if settings.debug_show_heatmap {
+                let res = debug.resolution;
+                for j in 0..res {
+                    for i in 0..res {
+                        let v = debug.grid[j][i];
+                        let t = ((v - debug.threshold) / debug.threshold.max(0.01)).clamp(-1.0, 1.0);
+                        let r = if t > 0.0 { t } else { 0.0 };
+                        let b = if t < 0.0 { -t } else { 0.0 };
+                        let g = 0.2;
+                        let x = debug.bounds_min.x + (i as f32 + 0.5) * debug.cell_w;
+                        let y = debug.bounds_min.y + (j as f32 + 0.5) * debug.cell_h;
+                        draw.rect()
+                            .x_y(x, y)
+                            .w_h(debug.cell_w, debug.cell_h)
+                            .color(rgba(r, g, b, 0.4));
+                    }
+                }
+            }
+
+            if settings.debug_show_grid {
+                let res = debug.resolution;
+                for i in 0..=res {
+                    let x = debug.bounds_min.x + i as f32 * debug.cell_w;
+                    draw.line()
+                        .start(pt2(x, debug.bounds_min.y))
+                        .end(pt2(x, debug.bounds_max.y))
+                        .weight(0.02)
+                        .color(rgba(1.0, 1.0, 1.0, 0.3));
+                }
+                for j in 0..=res {
+                    let y = debug.bounds_min.y + j as f32 * debug.cell_h;
+                    draw.line()
+                        .start(pt2(debug.bounds_min.x, y))
+                        .end(pt2(debug.bounds_max.x, y))
+                        .weight(0.02)
+                        .color(rgba(1.0, 1.0, 1.0, 0.3));
+                }
+            }
+
+            if settings.debug_show_segments {
+                for seg in &debug.segments {
+                    draw.line()
+                        .start(pt2(seg.0.x, seg.0.y))
+                        .end(pt2(seg.1.x, seg.1.y))
+                        .weight(0.08)
+                        .color(YELLOW);
+                }
+            }
+
+            if settings.debug_show_polygons {
+                for poly in &debug.polygons {
+                    if poly.len() >= 3 {
+                        draw.polygon()
+                            .x_y(0.0, 0.0)
+                            .color(rgba(0.2, 0.8, 0.4, 0.7))
+                            .points(poly.clone());
+                    }
+                }
+            }
+
+            if settings.debug_show_open_chains {
+                for chain in &debug.open_chains {
+                    for w in chain.windows(2) {
+                        draw.line()
+                            .start(pt2(w[0].0, w[0].1))
+                            .end(pt2(w[1].0, w[1].1))
+                            .weight(0.1)
+                            .color(RED);
+                    }
+                }
+            }
+
+            if settings.debug_show_case_labels {
+                for cell in &debug.cells {
+                    if cell.case_index != 0 && cell.case_index != 15 {
+                        let x = cell.x0 + cell.cell_w * 0.5;
+                        let y = cell.y0 + cell.cell_h * 0.5;
+                        draw.text(&cell.case_index.to_string())
+                            .x_y(x, y)
+                            .color(WHITE)
+                            .font_size(8);
+                    }
+                }
+            }
+
+            if !settings.debug_show_polygons && !settings.debug_show_segments {
+                for poly in &debug.polygons {
+                    if poly.len() >= 3 {
+                        draw.polygon()
+                            .x_y(0.0, 0.0)
+                            .color(rgba(0.2, 0.8, 0.4, 0.7))
+                            .points(poly.clone());
+                    }
                 }
             }
         }
