@@ -132,10 +132,20 @@ impl Arbiter {
                 collide_circle_circle(&mut contacts, &body_1.borrow(), &body_2.borrow())
             }
             (Shape::Circle, Shape::Box) | (Shape::Circle, Shape::ConvexPolygon) => {
+                // body_a=body1(circle), body_b=body2(polygon).
+                // collide_circle_polygon normal points from circle to polygon = body1 to body2. Correct.
                 collide_circle_polygon(&mut contacts, &body_1.borrow(), &body_2.borrow())
             }
             (Shape::Box, Shape::Circle) | (Shape::ConvexPolygon, Shape::Circle) => {
-                collide_circle_polygon(&mut contacts, &body_2.borrow(), &body_1.borrow())
+                // body_a=body2(circle), body_b=body1(polygon).
+                // collide_circle_polygon normal points from circle to polygon = body2 to body1. Flip needed.
+                let n = collide_circle_polygon(&mut contacts, &body_2.borrow(), &body_1.borrow());
+                for c in contacts.iter_mut() {
+                    if let Some(contact) = c {
+                        contact.normal = -contact.normal;
+                    }
+                }
+                n
             }
             _ => collide_polygons(&mut contacts, &body_1.borrow(), &body_2.borrow()),
         };
@@ -341,14 +351,16 @@ impl Arbiter {
         let contacts = self
             .contacts
             .iter()
-            .filter_map(|c| c.map(|c| ContactLog {
-                position: c.position,
-                normal: c.normal,
-                separation: c.separation,
-                pn: c.pn,
-                pt: c.pt,
-                pnb: c.pnb,
-            }))
+            .filter_map(|c| {
+                c.map(|c| ContactLog {
+                    position: c.position,
+                    normal: c.normal,
+                    separation: c.separation,
+                    pn: c.pn,
+                    pt: c.pt,
+                    pnb: c.pnb,
+                })
+            })
             .collect();
         ArbiterLog {
             body1_id: body1.id,

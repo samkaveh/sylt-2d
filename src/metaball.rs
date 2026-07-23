@@ -39,34 +39,56 @@ pub fn compute_metaball_bounds(
     let mut min_y = f32::MAX;
     let mut max_y = f32::MIN;
     for m in metaballs {
-        if m.position.x - m.radius < min_x { min_x = m.position.x - m.radius; }
-        if m.position.x + m.radius > max_x { max_x = m.position.x + m.radius; }
-        if m.position.y - m.radius < min_y { min_y = m.position.y - m.radius; }
-        if m.position.y + m.radius > max_y { max_y = m.position.y + m.radius; }
+        if m.position.x - m.radius < min_x {
+            min_x = m.position.x - m.radius;
+        }
+        if m.position.x + m.radius > max_x {
+            max_x = m.position.x + m.radius;
+        }
+        if m.position.y - m.radius < min_y {
+            min_y = m.position.y - m.radius;
+        }
+        if m.position.y + m.radius > max_y {
+            max_y = m.position.y + m.radius;
+        }
     }
 
     let mut bounds_min = Vec2::new(min_x - initial_pad, min_y - initial_pad);
     let mut bounds_max = Vec2::new(max_x + initial_pad, max_y + initial_pad);
 
     for _ in 0..20 {
-        let sample_below_threshold = |p: Vec2| -> bool {
-            sample_field(metaballs, p) < threshold
-        };
+        let sample_below_threshold = |p: Vec2| -> bool { sample_field(metaballs, p) < threshold };
 
         let mx = (bounds_min.x + bounds_max.x) * 0.5;
         let my = (bounds_min.y + bounds_max.y) * 0.5;
 
         let mut all_below = true;
 
-        if !sample_below_threshold(Vec2::new(bounds_min.x, my)) { all_below = false; }
-        if !sample_below_threshold(Vec2::new(bounds_max.x, my)) { all_below = false; }
-        if !sample_below_threshold(Vec2::new(mx, bounds_min.y)) { all_below = false; }
-        if !sample_below_threshold(Vec2::new(mx, bounds_max.y)) { all_below = false; }
+        if !sample_below_threshold(Vec2::new(bounds_min.x, my)) {
+            all_below = false;
+        }
+        if !sample_below_threshold(Vec2::new(bounds_max.x, my)) {
+            all_below = false;
+        }
+        if !sample_below_threshold(Vec2::new(mx, bounds_min.y)) {
+            all_below = false;
+        }
+        if !sample_below_threshold(Vec2::new(mx, bounds_max.y)) {
+            all_below = false;
+        }
 
-        if !sample_below_threshold(Vec2::new(bounds_min.x, bounds_min.y)) { all_below = false; }
-        if !sample_below_threshold(Vec2::new(bounds_max.x, bounds_min.y)) { all_below = false; }
-        if !sample_below_threshold(Vec2::new(bounds_min.x, bounds_max.y)) { all_below = false; }
-        if !sample_below_threshold(Vec2::new(bounds_max.x, bounds_max.y)) { all_below = false; }
+        if !sample_below_threshold(Vec2::new(bounds_min.x, bounds_min.y)) {
+            all_below = false;
+        }
+        if !sample_below_threshold(Vec2::new(bounds_max.x, bounds_min.y)) {
+            all_below = false;
+        }
+        if !sample_below_threshold(Vec2::new(bounds_min.x, bounds_max.y)) {
+            all_below = false;
+        }
+        if !sample_below_threshold(Vec2::new(bounds_max.x, bounds_max.y)) {
+            all_below = false;
+        }
 
         if all_below {
             break;
@@ -142,8 +164,12 @@ pub fn marching_squares_debug(
     let mut grid_max = f32::MIN;
     for j in 0..=resolution {
         for i in 0..=resolution {
-            if grid[j][i] < grid_min { grid_min = grid[j][i]; }
-            if grid[j][i] > grid_max { grid_max = grid[j][i]; }
+            if grid[j][i] < grid_min {
+                grid_min = grid[j][i];
+            }
+            if grid[j][i] > grid_max {
+                grid_max = grid[j][i];
+            }
         }
     }
 
@@ -162,16 +188,33 @@ pub fn marching_squares_debug(
             let y0 = bounds_min.y + j as f32 * cell_h;
 
             let mut case_index = 0u8;
-            if tl >= threshold { case_index |= 8; }
-            if tr >= threshold { case_index |= 4; }
-            if br >= threshold { case_index |= 2; }
-            if bl >= threshold { case_index |= 1; }
+            if tl >= threshold {
+                case_index |= 8;
+            }
+            if tr >= threshold {
+                case_index |= 4;
+            }
+            if br >= threshold {
+                case_index |= 2;
+            }
+            if bl >= threshold {
+                case_index |= 1;
+            }
 
             case_histogram[case_index as usize] += 1;
 
             cells.push(CellInfo {
-                i, j, bl, br, tl, tr, case_index,
-                x0, y0, cell_w, cell_h,
+                i,
+                j,
+                bl,
+                br,
+                tl,
+                tr,
+                case_index,
+                x0,
+                y0,
+                cell_w,
+                cell_h,
             });
 
             if case_index == 0 || case_index == 15 {
@@ -273,10 +316,18 @@ pub fn marching_squares(
             let y1 = y0 + cell_h;
 
             let mut case_index = 0;
-            if tl >= threshold { case_index |= 8; }
-            if tr >= threshold { case_index |= 4; }
-            if br >= threshold { case_index |= 2; }
-            if bl >= threshold { case_index |= 1; }
+            if tl >= threshold {
+                case_index |= 8;
+            }
+            if tr >= threshold {
+                case_index |= 4;
+            }
+            if br >= threshold {
+                case_index |= 2;
+            }
+            if bl >= threshold {
+                case_index |= 1;
+            }
 
             let interp = |v1: f32, v2: f32, p1: Vec2, p2: Vec2| -> Vec2 {
                 let t = (threshold - v1) / (v2 - v1);
@@ -317,7 +368,9 @@ pub fn marching_squares(
     chain_segments(segments)
 }
 
-fn chain_segments_debug(segments: Vec<(Vec2, Vec2)>) -> (Vec<Vec<(f32, f32)>>, Vec<Vec<(f32, f32)>>) {
+fn chain_segments_debug(
+    segments: Vec<(Vec2, Vec2)>,
+) -> (Vec<Vec<(f32, f32)>>, Vec<Vec<(f32, f32)>>) {
     if segments.is_empty() {
         return (Vec::new(), Vec::new());
     }
@@ -385,7 +438,10 @@ mod tests {
         let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5);
 
         println!("Single metaball:");
-        println!("  Grid range: [{:.3}, {:.3}]", debug.grid_min, debug.grid_max);
+        println!(
+            "  Grid range: [{:.3}, {:.3}]",
+            debug.grid_min, debug.grid_max
+        );
         println!("  Case histogram: {:?}", debug.case_histogram);
         println!("  Segments: {}", debug.segments.len());
         println!("  Closed polygons: {}", debug.polygons.len());
@@ -394,13 +450,21 @@ mod tests {
             println!("  Polygon {}: {} points", i, poly.len());
         }
         for (i, chain) in debug.open_chains.iter().enumerate() {
-            println!("  Open chain {}: {} points, start=({:.3},{:.3}), end=({:.3},{:.3})",
-                i, chain.len(),
-                chain[0].0, chain[0].1,
-                chain[chain.len()-1].0, chain[chain.len()-1].1);
+            println!(
+                "  Open chain {}: {} points, start=({:.3},{:.3}), end=({:.3},{:.3})",
+                i,
+                chain.len(),
+                chain[0].0,
+                chain[0].1,
+                chain[chain.len() - 1].0,
+                chain[chain.len() - 1].1
+            );
         }
 
-        assert!(!debug.polygons.is_empty(), "Should produce at least one closed polygon");
+        assert!(
+            !debug.polygons.is_empty(),
+            "Should produce at least one closed polygon"
+        );
         assert!(debug.open_chains.is_empty(), "Should have no open chains");
     }
 
@@ -415,7 +479,10 @@ mod tests {
         let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5);
 
         println!("\nTwo close metaballs (merged):");
-        println!("  Grid range: [{:.3}, {:.3}]", debug.grid_min, debug.grid_max);
+        println!(
+            "  Grid range: [{:.3}, {:.3}]",
+            debug.grid_min, debug.grid_max
+        );
         println!("  Case histogram: {:?}", debug.case_histogram);
         println!("  Segments: {}", debug.segments.len());
         println!("  Closed polygons: {}", debug.polygons.len());
@@ -424,7 +491,10 @@ mod tests {
         let field_at_midpoint = sample_field(&metaballs, Vec2::new(0.0, 0.0));
         println!("  Field at midpoint (0,0): {:.3}", field_at_midpoint);
 
-        assert!(!debug.polygons.is_empty(), "Should produce at least one closed polygon");
+        assert!(
+            !debug.polygons.is_empty(),
+            "Should produce at least one closed polygon"
+        );
     }
 
     #[test]
@@ -438,7 +508,10 @@ mod tests {
         let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 80, 0.5);
 
         println!("\nTwo far apart metaballs (separate):");
-        println!("  Grid range: [{:.3}, {:.3}]", debug.grid_min, debug.grid_max);
+        println!(
+            "  Grid range: [{:.3}, {:.3}]",
+            debug.grid_min, debug.grid_max
+        );
         println!("  Case histogram: {:?}", debug.case_histogram);
         println!("  Segments: {}", debug.segments.len());
         println!("  Closed polygons: {}", debug.polygons.len());
@@ -450,7 +523,11 @@ mod tests {
         let field_between = sample_field(&metaballs, Vec2::new(0.0, 0.0));
         println!("  Field between at (0,0): {:.3}", field_between);
 
-        assert!(debug.polygons.len() >= 2, "Should produce at least two closed polygons, got {}", debug.polygons.len());
+        assert!(
+            debug.polygons.len() >= 2,
+            "Should produce at least two closed polygons, got {}",
+            debug.polygons.len()
+        );
     }
 
     #[test]
@@ -465,20 +542,31 @@ mod tests {
         let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 60, 0.5);
 
         println!("\nThree metaballs in triangle:");
-        println!("  Grid range: [{:.3}, {:.3}]", debug.grid_min, debug.grid_max);
+        println!(
+            "  Grid range: [{:.3}, {:.3}]",
+            debug.grid_min, debug.grid_max
+        );
         println!("  Case histogram: {:?}", debug.case_histogram);
         println!("  Segments: {}", debug.segments.len());
         println!("  Closed polygons: {}", debug.polygons.len());
         println!("  Open chains: {}", debug.open_chains.len());
         for (i, chain) in debug.open_chains.iter().enumerate() {
-            println!("  Open chain {}: {} points, start=({:.3},{:.3}), end=({:.3},{:.3})",
-                i, chain.len(),
-                chain[0].0, chain[0].1,
-                chain[chain.len()-1].0, chain[chain.len()-1].1);
+            println!(
+                "  Open chain {}: {} points, start=({:.3},{:.3}), end=({:.3},{:.3})",
+                i,
+                chain.len(),
+                chain[0].0,
+                chain[0].1,
+                chain[chain.len() - 1].0,
+                chain[chain.len() - 1].1
+            );
         }
 
         if !debug.open_chains.is_empty() {
-            println!("  WARNING: {} open chains detected!", debug.open_chains.len());
+            println!(
+                "  WARNING: {} open chains detected!",
+                debug.open_chains.len()
+            );
             println!("  This indicates the contour reaches the grid boundary");
         }
     }
@@ -503,9 +591,14 @@ mod tests {
         let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5);
 
         println!("\nSix circles on ground (demo11 scenario):");
-        println!("  Bounds: ({:.1},{:.1}) to ({:.1},{:.1})",
-            bounds_min.x, bounds_min.y, bounds_max.x, bounds_max.y);
-        println!("  Grid range: [{:.3}, {:.3}]", debug.grid_min, debug.grid_max);
+        println!(
+            "  Bounds: ({:.1},{:.1}) to ({:.1},{:.1})",
+            bounds_min.x, bounds_min.y, bounds_max.x, bounds_max.y
+        );
+        println!(
+            "  Grid range: [{:.3}, {:.3}]",
+            debug.grid_min, debug.grid_max
+        );
         println!("  Case histogram: {:?}", debug.case_histogram);
         println!("  Segments: {}", debug.segments.len());
         println!("  Closed polygons: {}", debug.polygons.len());
@@ -514,10 +607,15 @@ mod tests {
             println!("  Polygon {}: {} points", i, poly.len());
         }
         for (i, chain) in debug.open_chains.iter().enumerate() {
-            println!("  Open chain {}: {} points, start=({:.3},{:.3}), end=({:.3},{:.3})",
-                i, chain.len(),
-                chain[0].0, chain[0].1,
-                chain[chain.len()-1].0, chain[chain.len()-1].1);
+            println!(
+                "  Open chain {}: {} points, start=({:.3},{:.3}), end=({:.3},{:.3})",
+                i,
+                chain.len(),
+                chain[0].0,
+                chain[0].1,
+                chain[chain.len() - 1].0,
+                chain[chain.len() - 1].1
+            );
         }
 
         let field_at_center = sample_field(&metaballs, Vec2::new(0.0, y));
@@ -525,10 +623,16 @@ mod tests {
         let field_between = sample_field(&metaballs, Vec2::new(-3.125, y));
         println!("  Field at center (0,{:.1}): {:.3}", y, field_at_center);
         println!("  Field at leftmost (-6.25,{:.1}): {:.3}", y, field_at_left);
-        println!("  Field between circles (-3.125,{:.1}): {:.3}", y, field_between);
+        println!(
+            "  Field between circles (-3.125,{:.1}): {:.3}",
+            y, field_between
+        );
 
         if !debug.open_chains.is_empty() {
-            println!("  WARNING: {} open chains detected!", debug.open_chains.len());
+            println!(
+                "  WARNING: {} open chains detected!",
+                debug.open_chains.len()
+            );
         }
     }
 }

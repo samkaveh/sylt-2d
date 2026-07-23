@@ -2,9 +2,9 @@ use nannou::prelude::*;
 use nannou_egui::{self, egui, Egui};
 use sylt_2d::body::{Body, ConvexPolygon, Shape};
 use sylt_2d::joint::Joint;
-use sylt_2d::math_utils::{Mat2x2, Vec2};
 use sylt_2d::log::Logger;
-use sylt_2d::metaball::{marching_squares_debug, Metaball, compute_metaball_bounds};
+use sylt_2d::math_utils::{Mat2x2, Vec2};
+use sylt_2d::metaball::{compute_metaball_bounds, marching_squares_debug, Metaball};
 use sylt_2d::world::World;
 fn main() {
     nannou::app(model).update(update).run();
@@ -479,6 +479,98 @@ fn demo13(model: &mut Model) {
     model.world.add_body(body2);
 }
 
+fn demo14(model: &mut Model) {
+    let mut ground = Body::new(Vec2::new(100.0, 20.0), f32::MAX);
+    ground.friction = 0.4;
+    ground.position = Vec2::new(0.0, -0.5 * ground.width.y);
+    model.world.add_body(ground);
+
+    model.metaball_bodies.clear();
+
+    let mut b1 = Body::new(Vec2::new(1.5, 1.5), 50.0);
+    b1.position = Vec2::new(-4.0, 4.0);
+    b1.friction = 0.5;
+    model.world.add_body(b1);
+
+    let mut b2 = Body::new(Vec2::new(2.0, 1.0), 80.0);
+    b2.position = Vec2::new(0.0, 6.0);
+    b2.rotation = 30.0_f32.to_radians();
+    b2.friction = 0.3;
+    model.world.add_body(b2);
+
+    let mut b3 = Body::new(Vec2::new(1.0, 2.5), 100.0);
+    b3.position = Vec2::new(4.0, 5.0);
+    b3.rotation = -15.0_f32.to_radians();
+    b3.friction = 0.2;
+    model.world.add_body(b3);
+
+    let mut c1 = Body::new_circle(0.6, 10.0);
+    c1.position = Vec2::new(-2.5, 8.0);
+    c1.friction = 0.4;
+    model.world.add_body(c1);
+
+    let mut c2 = Body::new_circle(0.8, 15.0);
+    c2.position = Vec2::new(1.5, 9.0);
+    c2.friction = 0.3;
+    model.world.add_body(c2);
+
+    let mut c3 = Body::new_circle(0.5, 8.0);
+    c3.position = Vec2::new(-1.0, 10.0);
+    c3.friction = 0.5;
+    model.world.add_body(c3);
+
+    let mut c4 = Body::new_circle(1.0, 20.0);
+    c4.position = Vec2::new(3.0, 7.5);
+    c4.friction = 0.2;
+    model.world.add_body(c4);
+
+    let pentagon: Vec<Vec2> = vec![
+        Vec2 { x: 0.0, y: 0.9 },
+        Vec2 { x: -0.86, y: 0.28 },
+        Vec2 { x: -0.53, y: -0.73 },
+        Vec2 { x: 0.53, y: -0.73 },
+        Vec2 { x: 0.86, y: 0.28 },
+    ];
+    let mut p1 = Body::new_polygon(pentagon, 12.0);
+    p1.position = Vec2::new(-3.5, 10.0);
+    p1.friction = 0.6;
+    model.world.add_body(p1);
+
+    let hexagon: Vec<Vec2> = vec![
+        Vec2 { x: 0.0, y: 0.8 },
+        Vec2 { x: -0.69, y: 0.4 },
+        Vec2 { x: -0.69, y: -0.4 },
+        Vec2 { x: 0.0, y: -0.8 },
+        Vec2 { x: 0.69, y: -0.4 },
+        Vec2 { x: 0.69, y: 0.4 },
+    ];
+    let mut h1 = Body::new_polygon(hexagon, 15.0);
+    h1.position = Vec2::new(2.0, 11.0);
+    h1.friction = 0.4;
+    model.world.add_body(h1);
+
+    let triangle: Vec<Vec2> = vec![
+        Vec2 { x: 0.0, y: 0.8 },
+        Vec2 { x: -0.7, y: -0.5 },
+        Vec2 { x: 0.7, y: -0.5 },
+    ];
+    let mut t1 = Body::new_polygon(triangle, 10.0);
+    t1.position = Vec2::new(-1.5, 12.0);
+    t1.rotation = 20.0_f32.to_radians();
+    t1.friction = 0.5;
+    model.world.add_body(t1);
+
+    let mut wall_l = Body::new(Vec2::new(0.5, 6.0), f32::MAX);
+    wall_l.position = Vec2::new(-8.0, 3.0);
+    wall_l.friction = 0.1;
+    model.world.add_body(wall_l);
+
+    let mut wall_r = Body::new(Vec2::new(0.5, 6.0), f32::MAX);
+    wall_r.position = Vec2::new(8.0, 3.0);
+    wall_r.friction = 0.1;
+    model.world.add_body(wall_r);
+}
+
 fn update(_app: &App, _model: &mut Model, _update: Update) {
     if _model.is_first_frame {
         let step = _model.world.step(_model.time_step);
@@ -521,6 +613,9 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
         "Demo 9: Multi-pendulum",
         "Demo 10: A Pawn and the pendulum",
         "Demo 11: Metaballs",
+        "Demo 12: 2 Metaballs (Static)",
+        "Demo 13: 2 Metaballs (Physics)",
+        "Demo 14: Mixed Shapes",
     ];
     egui::Window::new("Settings").show(&ctx, |ui| {
         // Dropdown for selecting the demo
@@ -566,11 +661,15 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
             "Enable/Disable accumulation of impulse.",
         );
 
-    if _model.demo_index >= 10 {
+        if _model.demo_index >= 10 {
             ui.separator();
             ui.label("Metaball Settings:");
-            ui.add(egui::Slider::new(&mut settings.metaball_threshold, 0.1..=2.0).text("Threshold"));
-            ui.add(egui::Slider::new(&mut settings.metaball_resolution, 20..=100).text("Resolution"));
+            ui.add(
+                egui::Slider::new(&mut settings.metaball_threshold, 0.1..=2.0).text("Threshold"),
+            );
+            ui.add(
+                egui::Slider::new(&mut settings.metaball_resolution, 20..=100).text("Resolution"),
+            );
             ui.add(egui::Slider::new(&mut settings.metaball_strength, 0.1..=5.0).text("Strength"));
             ui.add(egui::Slider::new(&mut settings.metaball_radius, 0.3..=2.0).text("Radius"));
             ui.separator();
@@ -615,6 +714,7 @@ fn load_demo(model: &mut Model) {
         10 => demo11(model),
         11 => demo12(model),
         12 => demo13(model),
+        13 => demo14(model),
         _ => {}
     }
 }
@@ -669,7 +769,7 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                     .points(tuples);
             }
             Shape::Circle => {
-                if _model.demo_index >= 10 {
+                if _model.demo_index == 12 {
                     // Skip individual circle rendering; metaball contour replaces it
                 } else {
                     draw.ellipse()
@@ -681,7 +781,7 @@ fn view(app: &App, _model: &Model, frame: Frame) {
         }
     }
 
-        if _model.demo_index >= 10 {
+    if _model.demo_index >= 10 {
         let metaballs: Vec<Metaball> = _model
             .world
             .iter_bodies()
@@ -696,11 +796,8 @@ fn view(app: &App, _model: &Model, frame: Frame) {
             .collect();
 
         if !metaballs.is_empty() {
-            let (bounds_min, bounds_max) = compute_metaball_bounds(
-                &metaballs,
-                settings.metaball_threshold,
-                3.0,
-            );
+            let (bounds_min, bounds_max) =
+                compute_metaball_bounds(&metaballs, settings.metaball_threshold, 3.0);
 
             let debug = marching_squares_debug(
                 &metaballs,
@@ -715,7 +812,8 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                 for j in 0..res {
                     for i in 0..res {
                         let v = debug.grid[j][i];
-                        let t = ((v - debug.threshold) / debug.threshold.max(0.01)).clamp(-1.0, 1.0);
+                        let t =
+                            ((v - debug.threshold) / debug.threshold.max(0.01)).clamp(-1.0, 1.0);
                         let r = if t > 0.0 { t } else { 0.0 };
                         let b = if t < 0.0 { -t } else { 0.0 };
                         let g = 0.2;

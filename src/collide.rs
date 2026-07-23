@@ -528,7 +528,7 @@ mod tests {
 
         let mut box_b = Body::new(Vec2::new(4.0, 4.0), 1.0);
         box_b.position = pos_b;
- 
+
         // Draw the boxes
         add_box(
             &mut grid,
@@ -591,4 +591,4 @@ mod tests {
             num_contacts
         );
     }
-    }
+}
