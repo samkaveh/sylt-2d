@@ -351,10 +351,18 @@ impl Body {
                 let mut max_y = f32::MIN;
                 for v in &self.vertices {
                     let wv = self.position + rot * *v;
-                    if wv.x < min_x { min_x = wv.x; }
-                    if wv.x > max_x { max_x = wv.x; }
-                    if wv.y < min_y { min_y = wv.y; }
-                    if wv.y > max_y { max_y = wv.y; }
+                    if wv.x < min_x {
+                        min_x = wv.x;
+                    }
+                    if wv.x > max_x {
+                        max_x = wv.x;
+                    }
+                    if wv.y < min_y {
+                        min_y = wv.y;
+                    }
+                    if wv.y > max_y {
+                        max_y = wv.y;
+                    }
                 }
                 Aabb {
                     min: Vec2::new(min_x, min_y),

@@ -161,9 +161,7 @@ impl World {
 
         let mut pairs_to_remove: Vec<ArbiterKey> = Vec::new();
         for key in self.arbiters.keys() {
-            let found = candidate_pairs
-                .iter()
-                .any(|&(a, b)| key.matches(a, b));
+            let found = candidate_pairs.iter().any(|&(a, b)| key.matches(a, b));
             if !found {
                 pairs_to_remove.push(ArbiterKey::new_by_id(key.body1_id(), key.body2_id()));
             }

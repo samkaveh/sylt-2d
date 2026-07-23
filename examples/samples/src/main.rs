@@ -4,7 +4,9 @@ use sylt_2d::body::{Body, ConvexPolygon, Shape};
 use sylt_2d::joint::Joint;
 use sylt_2d::log::Logger;
 use sylt_2d::math_utils::{Mat2x2, Vec2};
-use sylt_2d::metaball::{cluster_metaballs, compute_metaball_bounds, marching_squares_debug, Metaball};
+use sylt_2d::metaball::{
+    cluster_metaballs, compute_metaball_bounds, marching_squares_debug, Metaball,
+};
 use sylt_2d::world::World;
 fn main() {
     nannou::app(model).update(update).run();
@@ -675,7 +677,8 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
             ui.add(egui::Slider::new(&mut settings.metaball_strength, 0.1..=5.0).text("Strength"));
             ui.add(egui::Slider::new(&mut settings.metaball_radius, 0.3..=2.0).text("Radius"));
             ui.add(
-                egui::Slider::new(&mut settings.metaball_cluster_threshold, 0.0..=5.0).text("Cluster Threshold"),
+                egui::Slider::new(&mut settings.metaball_cluster_threshold, 0.0..=5.0)
+                    .text("Cluster Threshold"),
             );
             ui.separator();
             ui.label("Debug Overlays:");
@@ -808,7 +811,7 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                     compute_metaball_bounds(&cluster.metaballs, settings.metaball_threshold, 3.0);
 
                 let debug = marching_squares_debug(
-                    &metaballs,
+                    &cluster.metaballs,
                     bounds_min,
                     bounds_max,
                     settings.metaball_resolution,
@@ -820,8 +823,8 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                     for j in 0..res {
                         for i in 0..res {
                             let v = debug.grid[j][i];
-                            let t =
-                                ((v - debug.threshold) / debug.threshold.max(0.01)).clamp(-1.0, 1.0);
+                            let t = ((v - debug.threshold) / debug.threshold.max(0.01))
+                                .clamp(-1.0, 1.0);
                             let r = if t > 0.0 { t } else { 0.0 };
                             let b = if t < 0.0 { -t } else { 0.0 };
                             let g = 0.2;
@@ -908,6 +911,14 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                                 .x_y(0.0, 0.0)
                                 .color(rgba(0.2, 0.8, 0.4, 0.7))
                                 .points(poly.clone());
+                        }
+                    }
+                    for chain in &debug.open_chains {
+                        if chain.len() >= 3 {
+                            draw.polygon()
+                                .x_y(0.0, 0.0)
+                                .color(rgba(0.2, 0.8, 0.4, 0.7))
+                                .points(chain.clone());
                         }
                     }
                 }

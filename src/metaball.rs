@@ -35,11 +35,20 @@ pub fn compute_metaball_bounds(
     threshold: f32,
     initial_pad: f32,
 ) -> (Vec2, Vec2) {
+    compute_metaball_bounds_with_field(metaballs, metaballs, threshold, initial_pad)
+}
+
+pub fn compute_metaball_bounds_with_field(
+    init_metaballs: &[Metaball],
+    field_metaballs: &[Metaball],
+    threshold: f32,
+    initial_pad: f32,
+) -> (Vec2, Vec2) {
     let mut min_x = f32::MAX;
     let mut max_x = f32::MIN;
     let mut min_y = f32::MAX;
     let mut max_y = f32::MIN;
-    for m in metaballs {
+    for m in init_metaballs {
         if m.position.x - m.radius < min_x {
             min_x = m.position.x - m.radius;
         }
@@ -58,7 +67,8 @@ pub fn compute_metaball_bounds(
     let mut bounds_max = Vec2::new(max_x + initial_pad, max_y + initial_pad);
 
     for _ in 0..20 {
-        let sample_below_threshold = |p: Vec2| -> bool { sample_field(metaballs, p) < threshold };
+        let sample_below_threshold =
+            |p: Vec2| -> bool { sample_field(field_metaballs, p) < threshold };
 
         let mx = (bounds_min.x + bounds_max.x) * 0.5;
         let my = (bounds_min.y + bounds_max.y) * 0.5;
@@ -101,6 +111,12 @@ pub fn compute_metaball_bounds(
         bounds_max.x += expand;
         bounds_max.y += expand;
     }
+
+    let edge_pad = initial_pad;
+    bounds_min.x -= edge_pad;
+    bounds_min.y -= edge_pad;
+    bounds_max.x += edge_pad;
+    bounds_max.y += edge_pad;
 
     (bounds_min, bounds_max)
 }
@@ -146,7 +162,8 @@ pub fn cluster_metaballs(metaballs: &[Metaball], threshold: f32) -> Vec<Metaball
     for i in 0..n {
         for j in (i + 1)..n {
             let midpoint = (metaballs[i].position + metaballs[j].position) * 0.5;
-            let field_at_mid = metaballs[i].field_value(midpoint) + metaballs[j].field_value(midpoint);
+            let field_at_mid =
+                metaballs[i].field_value(midpoint) + metaballs[j].field_value(midpoint);
             if field_at_mid >= threshold {
                 union(&mut parent, &mut rank, i, j);
             }
@@ -164,8 +181,10 @@ pub fn cluster_metaballs(metaballs: &[Metaball], threshold: f32) -> Vec<Metaball
         .map(|indices| {
             let cluster_balls: Vec<Metaball> = indices.iter().map(|&i| metaballs[i]).collect();
             let mut bounds = Aabb {
-                min: cluster_balls[0].position - Vec2::new(cluster_balls[0].radius, cluster_balls[0].radius),
-                max: cluster_balls[0].position + Vec2::new(cluster_balls[0].radius, cluster_balls[0].radius),
+                min: cluster_balls[0].position
+                    - Vec2::new(cluster_balls[0].radius, cluster_balls[0].radius),
+                max: cluster_balls[0].position
+                    + Vec2::new(cluster_balls[0].radius, cluster_balls[0].radius),
             };
             for m in &cluster_balls[1..] {
                 let m_aabb = Aabb {
