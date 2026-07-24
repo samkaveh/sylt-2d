@@ -371,6 +371,34 @@ impl Body {
             }
         }
     }
+
+    pub fn point_inside(&self, point: Vec2) -> bool {
+        match self.shape {
+            Shape::Circle => {
+                let diff = point - self.position;
+                diff.dot(diff) <= self.radius * self.radius
+            }
+            _ => {
+                let local = {
+                    let rot = Mat2x2::new_from_angle(-self.rotation);
+                    rot * (point - self.position)
+                };
+                let poly = self.get_polygon();
+                let n = poly.get_num_vertices();
+                for i in 0..n {
+                    let v1 = poly.get_vertex(i as isize);
+                    let v2 = poly.get_vertex((i + 1) as isize);
+                    let edge = v2 - v1;
+                    let to_point = local - v1;
+                    let cross = edge.x * to_point.y - edge.y * to_point.x;
+                    if cross <= 0.0 {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
 }
 
 #[cfg(test)]

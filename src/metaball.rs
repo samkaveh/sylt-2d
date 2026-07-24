@@ -1,3 +1,4 @@
+use crate::body::Body;
 use crate::math_utils::{Aabb, Vec2};
 
 #[derive(Clone, Copy)]
@@ -27,6 +28,15 @@ impl Metaball {
 }
 
 pub fn sample_field(metaballs: &[Metaball], point: Vec2) -> f32 {
+    metaballs.iter().map(|m| m.field_value(point)).sum()
+}
+
+pub fn sample_field_with_obstacles(metaballs: &[Metaball], point: Vec2, obstacles: &[Body]) -> f32 {
+    for obstacle in obstacles {
+        if obstacle.point_inside(point) {
+            return 0.0;
+        }
+    }
     metaballs.iter().map(|m| m.field_value(point)).sum()
 }
 
@@ -242,6 +252,7 @@ pub fn marching_squares_debug(
     bounds_max: Vec2,
     resolution: usize,
     threshold: f32,
+    obstacles: &[Body],
 ) -> MarchingSquaresDebug {
     let width = bounds_max.x - bounds_min.x;
     let height = bounds_max.y - bounds_min.y;
@@ -253,7 +264,11 @@ pub fn marching_squares_debug(
         for i in 0..=resolution {
             let x = bounds_min.x + i as f32 * cell_w;
             let y = bounds_min.y + j as f32 * cell_h;
-            grid[j][i] = sample_field(metaballs, Vec2::new(x, y));
+            grid[j][i] = if obstacles.is_empty() {
+                sample_field(metaballs, Vec2::new(x, y))
+            } else {
+                sample_field_with_obstacles(metaballs, Vec2::new(x, y), obstacles)
+            };
         }
     }
 
@@ -383,6 +398,7 @@ pub fn marching_squares(
     bounds_max: Vec2,
     resolution: usize,
     threshold: f32,
+    obstacles: &[Body],
 ) -> Vec<Vec<(f32, f32)>> {
     let width = bounds_max.x - bounds_min.x;
     let height = bounds_max.y - bounds_min.y;
@@ -394,7 +410,11 @@ pub fn marching_squares(
         for i in 0..=resolution {
             let x = bounds_min.x + i as f32 * cell_w;
             let y = bounds_min.y + j as f32 * cell_h;
-            grid[j][i] = sample_field(metaballs, Vec2::new(x, y));
+            grid[j][i] = if obstacles.is_empty() {
+                sample_field(metaballs, Vec2::new(x, y))
+            } else {
+                sample_field_with_obstacles(metaballs, Vec2::new(x, y), obstacles)
+            };
         }
     }
 
@@ -532,7 +552,7 @@ mod tests {
         let metaballs = vec![Metaball::new(Vec2::new(0.0, 0.0), 2.0, 1.0)];
         let bounds_min = Vec2::new(-6.0, -6.0);
         let bounds_max = Vec2::new(6.0, 6.0);
-        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5);
+        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5, &[]);
 
         println!("Single metaball:");
         println!(
@@ -573,7 +593,7 @@ mod tests {
         ];
         let bounds_min = Vec2::new(-6.0, -6.0);
         let bounds_max = Vec2::new(6.0, 6.0);
-        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5);
+        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5, &[]);
 
         println!("\nTwo close metaballs (merged):");
         println!(
@@ -602,7 +622,7 @@ mod tests {
         ];
         let bounds_min = Vec2::new(-12.0, -6.0);
         let bounds_max = Vec2::new(12.0, 6.0);
-        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 80, 0.5);
+        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 80, 0.5, &[]);
 
         println!("\nTwo far apart metaballs (separate):");
         println!(
@@ -636,7 +656,7 @@ mod tests {
         ];
         let bounds_min = Vec2::new(-8.0, -8.0);
         let bounds_max = Vec2::new(8.0, 8.0);
-        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 60, 0.5);
+        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 60, 0.5, &[]);
 
         println!("\nThree metaballs in triangle:");
         println!(
@@ -685,7 +705,7 @@ mod tests {
 
         let (bounds_min, bounds_max) = compute_metaball_bounds(&metaballs, 0.5, 3.0);
 
-        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5);
+        let debug = marching_squares_debug(&metaballs, bounds_min, bounds_max, 50, 0.5, &[]);
 
         println!("\nSix circles on ground (demo11 scenario):");
         println!(
