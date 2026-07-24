@@ -138,6 +138,14 @@ let ground = Body::new(Vec2::new(100.0, 1.0), f32::MAX);
 body.add_force(Vec2::new(100.0, 0.0)); // apply continuous force
 ```
 
+#### Point-in-Body Test
+
+```rust
+let inside = body.point_inside(Vec2::new(0.0, 0.0)); // true if point is inside the shape
+```
+
+Works for all shapes: circles use distance checks, polygons use winding-order cross products in local space.
+
 #### Body Properties
 
 | Field | Type | Description |
@@ -248,10 +256,11 @@ let (bounds_min, bounds_max) = compute_metaball_bounds(
 
 ### Marching Squares
 
-Generate iso-surface polygons from the metaball field:
+Generate iso-surface polygons from the metaball field. Both functions accept an optional `obstacles` parameter — when provided, grid points inside obstacles report field = 0, causing the iso-surface to terminate at obstacle boundaries:
 
 ```rust
 use sylt_2d::metaball::{marching_squares, marching_squares_debug};
+use sylt_2d::body::Body;
 
 // Simple: returns closed polygons
 let polygons: Vec<Vec<(f32, f32)>> = marching_squares(
@@ -260,6 +269,7 @@ let polygons: Vec<Vec<(f32, f32)>> = marching_squares(
     bounds_max,
     50,     // resolution (grid cells per axis)
     0.5,    // threshold
+    &obstacles,  // &[Body] — metaballs deform against these
 );
 
 // Debug: returns full info including grid, segments, open chains
@@ -269,6 +279,7 @@ let debug = marching_squares_debug(
     bounds_max,
     50,
     0.5,
+    &obstacles,
 );
 // debug.polygons     - closed polygon contours
 // debug.open_chains  - unclosed contour segments
@@ -277,14 +288,39 @@ let debug = marching_squares_debug(
 // debug.grid_min/max - field value range
 ```
 
+Pass an empty `&[]` to disable obstacle-aware sampling (pure metaball field).
+
+### Obstacle-Aware Metaballs
+
+When metaballs meet static objects (walls, floors, platforms), they can be made to deform against them rather than overlap. The engine achieves this by zeroing the field value at any grid point that falls inside an obstacle body:
+
+```rust
+// Collect obstacles (all non-metaball bodies)
+let obstacles: Vec<Body> = world
+    .iter_bodies()
+    .filter(|b| !metaball_ids.contains(&b.id))
+    .map(|b| (*b).clone())
+    .collect();
+
+// Pass to marching squares
+let debug = marching_squares_debug(
+    &metaballs, min, max, resolution, threshold,
+    &obstacles,
+);
+```
+
+This works because `Body::point_inside(point)` tests whether a point lies within any shape — circles use distance checks, polygons use winding-order cross products. Points inside obstacles get field = 0, so the iso-surface (where field = threshold) naturally stops at obstacle boundaries.
+
 ### Metaball Rendering Pattern
 
-A typical rendering loop with metaballs attached to physics bodies:
+A typical rendering loop with metaballs attached to physics bodies and obstacle-aware deformation:
 
 ```rust
 use sylt_2d::metaball::{Metaball, cluster_metaballs, compute_metaball_bounds, marching_squares_debug};
+use sylt_2d::body::Body;
 
 // Collect metaballs from physics bodies
+let metaball_ids: std::collections::HashSet<usize> = metaball_body_indices.iter().copied().collect();
 let metaballs: Vec<Metaball> = metaball_bodies
     .iter()
     .map(|&body_idx| {
@@ -297,12 +333,22 @@ let metaballs: Vec<Metaball> = metaball_bodies
     })
     .collect();
 
+// Collect obstacles (non-metaball bodies)
+let obstacles: Vec<Body> = world
+    .iter_bodies()
+    .filter(|b| !metaball_ids.contains(&b.id))
+    .map(|b| (*b).clone())
+    .collect();
+
 if !metaballs.is_empty() {
     let clusters = cluster_metaballs(&metaballs, cluster_threshold);
 
     for cluster in &clusters {
         let (min, max) = compute_metaball_bounds(&cluster.metaballs, threshold, 3.0);
-        let debug = marching_squares_debug(&cluster.metaballs, min, max, resolution, threshold);
+        let debug = marching_squares_debug(
+            &cluster.metaballs, min, max, resolution, threshold,
+            &obstacles,
+        );
 
         // Render filled polygons
         for poly in &debug.polygons {
