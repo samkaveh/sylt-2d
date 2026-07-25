@@ -2,7 +2,7 @@ use crate::arbiter::{Arbiter, ArbiterKey};
 use crate::body::Body;
 use crate::errors::Sylt2DErrors;
 use crate::joint::Joint;
-use crate::math_utils::Vec2;
+use crate::math_utils::{Aabb, Vec2};
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -17,6 +17,14 @@ pub struct WorldContext {
     pub warm_starting: bool,
     pub position_correction: bool,
 }
+
+#[derive(Clone, Copy)]
+struct SapEndpoint {
+    value: f32,
+    body_index: usize,
+    is_max: bool,
+}
+
 pub struct World {
     gravity: Vec2,
     iterations: u32,
@@ -24,6 +32,8 @@ pub struct World {
     pub bodies: Vec<Rc<RefCell<Body>>>,
     pub joints: Vec<Joint>,
     pub arbiters: HashMap<ArbiterKey, Arbiter>,
+    sap_endpoints: Vec<SapEndpoint>,
+    sap_aabbs: Vec<Aabb>,
     #[cfg(feature = "log")]
     pub logger: Option<Logger>,
 }
@@ -52,6 +62,8 @@ impl World {
             bodies: Vec::<Rc<RefCell<Body>>>::with_capacity(2),
             joints: Vec::<Joint>::with_capacity(2),
             arbiters: HashMap::<ArbiterKey, Arbiter>::new(),
+            sap_endpoints: Vec::new(),
+            sap_aabbs: Vec::new(),
             #[cfg(feature = "log")]
             logger: None,
         }
@@ -75,6 +87,8 @@ impl World {
         self.bodies.clear();
         self.joints.clear();
         self.arbiters.clear();
+        self.sap_endpoints.clear();
+        self.sap_aabbs.clear();
     }
 
     #[cfg(feature = "log")]
@@ -82,35 +96,110 @@ impl World {
         self.logger = Some(logger);
     }
 
+    fn sort_endpoints(endpoints: &mut [SapEndpoint]) {
+        let len = endpoints.len();
+        for i in 1..len {
+            let key = endpoints[i];
+            let mut j = i;
+            while j > 0 && endpoints[j - 1].value > key.value {
+                endpoints[j] = endpoints[j - 1];
+                j -= 1;
+            }
+            endpoints[j] = key;
+        }
+    }
+
     pub fn broad_phase(&mut self) -> Result<(), Sylt2DErrors> {
-        for i in 0..self.bodies.len() {
-            let body_i = self.bodies[i].borrow();
+        let n = self.bodies.len();
 
-            for j in (i + 1)..self.bodies.len() {
-                let body_j = self.bodies[j].borrow();
-                if body_i.inv_mass == 0.0 && body_j.inv_mass == 0.0 {
-                    continue;
-                };
-                let new_arbiter = Arbiter::new(self.bodies[i].clone(), self.bodies[j].clone());
-                let key = ArbiterKey::new(&body_i, &body_j);
+        self.sap_aabbs.clear();
+        self.sap_aabbs.reserve(n);
+        for body in &self.bodies {
+            self.sap_aabbs.push(body.borrow().get_aabb());
+        }
 
-                if new_arbiter.num_contacts > 0 {
-                    match self.arbiters.entry(key) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            let arbiter = entry.get_mut();
-                            arbiter.update(
-                                new_arbiter.contacts.as_ref(),
-                                new_arbiter.num_contacts,
-                                &self.world_context,
-                            )?
-                        }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert(new_arbiter);
-                        }
+        self.sap_endpoints.clear();
+        self.sap_endpoints.reserve(n * 2);
+        for i in 0..n {
+            let aabb = self.sap_aabbs[i];
+            self.sap_endpoints.push(SapEndpoint {
+                value: aabb.min.x,
+                body_index: i,
+                is_max: false,
+            });
+            self.sap_endpoints.push(SapEndpoint {
+                value: aabb.max.x,
+                body_index: i,
+                is_max: true,
+            });
+        }
+
+        Self::sort_endpoints(&mut self.sap_endpoints);
+
+        let mut active: Vec<usize> = Vec::with_capacity(16);
+        let mut candidate_pairs: Vec<(usize, usize)> = Vec::with_capacity(32);
+
+        for ep in &self.sap_endpoints {
+            if ep.is_max {
+                active.retain(|&idx| idx != ep.body_index);
+            } else {
+                let aabb_i = self.sap_aabbs[ep.body_index];
+                for &active_idx in &active {
+                    let aabb_j = self.sap_aabbs[active_idx];
+                    if aabb_i.overlaps(&aabb_j) {
+                        let (lo, hi) = if ep.body_index < active_idx {
+                            (ep.body_index, active_idx)
+                        } else {
+                            (active_idx, ep.body_index)
+                        };
+                        candidate_pairs.push((lo, hi));
                     }
-                } else {
-                    self.arbiters.remove(&key);
                 }
+                active.push(ep.body_index);
+            }
+        }
+
+        let mut pairs_to_remove: Vec<ArbiterKey> = Vec::new();
+        for key in self.arbiters.keys() {
+            let found = candidate_pairs.iter().any(|&(a, b)| key.matches(a, b));
+            if !found {
+                pairs_to_remove.push(ArbiterKey::new_by_id(key.body1_id(), key.body2_id()));
+            }
+        }
+        for key in pairs_to_remove {
+            self.arbiters.remove(&key);
+        }
+
+        for (i, j) in candidate_pairs {
+            let body_i = &self.bodies[i];
+            let body_j = &self.bodies[j];
+            {
+                let bi = body_i.borrow();
+                let bj = body_j.borrow();
+                if bi.inv_mass == 0.0 && bj.inv_mass == 0.0 {
+                    continue;
+                }
+            }
+
+            let new_arbiter = Arbiter::new(body_i.clone(), body_j.clone());
+            let key = ArbiterKey::new(&body_i.borrow(), &body_j.borrow());
+
+            if new_arbiter.num_contacts > 0 {
+                match self.arbiters.entry(key) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        let arbiter = entry.get_mut();
+                        arbiter.update(
+                            new_arbiter.contacts.as_ref(),
+                            new_arbiter.num_contacts,
+                            &self.world_context,
+                        )?
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(new_arbiter);
+                    }
+                }
+            } else {
+                self.arbiters.remove(&key);
             }
         }
         Ok(())

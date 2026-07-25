@@ -248,6 +248,53 @@ impl Mul for Mat2x2 {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Aabb {
+    pub min: Vec2,
+    pub max: Vec2,
+}
+
+impl Aabb {
+    pub fn new(min: Vec2, max: Vec2) -> Self {
+        Self { min, max }
+    }
+
+    pub fn overlaps(&self, other: &Aabb) -> bool {
+        self.min.x <= other.max.x
+            && self.max.x >= other.min.x
+            && self.min.y <= other.max.y
+            && self.max.y >= other.min.y
+    }
+
+    pub fn overlaps_with_threshold(&self, other: &Aabb, threshold: f32) -> bool {
+        self.min.x - threshold <= other.max.x
+            && self.max.x + threshold >= other.min.x
+            && self.min.y - threshold <= other.max.y
+            && self.max.y + threshold >= other.min.y
+    }
+
+    pub fn expand(&self, margin: f32) -> Self {
+        Self {
+            min: self.min - Vec2::new(margin, margin),
+            max: self.max + Vec2::new(margin, margin),
+        }
+    }
+
+    pub fn union(&self, other: &Aabb) -> Self {
+        Self {
+            min: Vec2::new(self.min.x.min(other.min.x), self.min.y.min(other.min.y)),
+            max: Vec2::new(self.max.x.max(other.max.x), self.max.y.max(other.max.y)),
+        }
+    }
+
+    pub fn center(&self) -> Vec2 {
+        Vec2::new(
+            (self.min.x + self.max.x) * 0.5,
+            (self.min.y + self.max.y) * 0.5,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::f32;

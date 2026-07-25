@@ -1,4 +1,4 @@
-use crate::math_utils::{Mat2x2, Vec2};
+use crate::math_utils::{Aabb, Mat2x2, Vec2};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ConvexPolygon {
@@ -334,6 +334,41 @@ impl Body {
     pub fn get_polygon(&self) -> ConvexPolygon {
         ConvexPolygon {
             vertices: self.vertices.clone(),
+        }
+    }
+
+    pub fn get_aabb(&self) -> Aabb {
+        match self.shape {
+            Shape::Circle => Aabb {
+                min: self.position - Vec2::new(self.radius, self.radius),
+                max: self.position + Vec2::new(self.radius, self.radius),
+            },
+            _ => {
+                let rot = Mat2x2::new_from_angle(self.rotation);
+                let mut min_x = f32::MAX;
+                let mut max_x = f32::MIN;
+                let mut min_y = f32::MAX;
+                let mut max_y = f32::MIN;
+                for v in &self.vertices {
+                    let wv = self.position + rot * *v;
+                    if wv.x < min_x {
+                        min_x = wv.x;
+                    }
+                    if wv.x > max_x {
+                        max_x = wv.x;
+                    }
+                    if wv.y < min_y {
+                        min_y = wv.y;
+                    }
+                    if wv.y > max_y {
+                        max_y = wv.y;
+                    }
+                }
+                Aabb {
+                    min: Vec2::new(min_x, min_y),
+                    max: Vec2::new(max_x, max_y),
+                }
+            }
         }
     }
 }

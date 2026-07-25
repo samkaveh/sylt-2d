@@ -107,6 +107,25 @@ impl ArbiterKey {
             }
         }
     }
+
+    pub fn new_by_id(id1: usize, id2: usize) -> Self {
+        Self {
+            body1_id: id1.min(id2),
+            body2_id: id1.max(id2),
+        }
+    }
+
+    pub fn body1_id(&self) -> usize {
+        self.body1_id
+    }
+
+    pub fn body2_id(&self) -> usize {
+        self.body2_id
+    }
+
+    pub fn matches(&self, a: usize, b: usize) -> bool {
+        (self.body1_id == a && self.body2_id == b) || (self.body1_id == b && self.body2_id == a)
+    }
 }
 
 #[derive(Debug)]
