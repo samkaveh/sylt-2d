@@ -804,11 +804,20 @@ fn view(app: &App, _model: &Model, frame: Frame) {
             .collect();
 
         if !metaballs.is_empty() {
+            let metaball_ids: std::collections::HashSet<usize> =
+                _model.metaball_bodies.iter().copied().collect();
             let clusters = cluster_metaballs(&metaballs, settings.metaball_cluster_threshold);
 
             for cluster in &clusters {
                 let (bounds_min, bounds_max) =
                     compute_metaball_bounds(&cluster.metaballs, settings.metaball_threshold, 3.0);
+
+                let obstacles: Vec<Body> = _model
+                    .world
+                    .iter_bodies()
+                    .filter(|b| !metaball_ids.contains(&b.id))
+                    .map(|b| (*b).clone())
+                    .collect();
 
                 let debug = marching_squares_debug(
                     &cluster.metaballs,
@@ -816,6 +825,7 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                     bounds_max,
                     settings.metaball_resolution,
                     settings.metaball_threshold,
+                    &obstacles,
                 );
 
                 if settings.debug_show_heatmap {
