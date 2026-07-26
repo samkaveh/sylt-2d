@@ -11,14 +11,12 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub enum ArbiterErrors {
     NoOldContactFound,
-    NoNewContactFound,
 }
 
 impl fmt::Display for ArbiterErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ArbiterErrors::NoOldContactFound => write!(f, "No old contacts found."),
-            ArbiterErrors::NoNewContactFound => write!(f, "No new contacts found."),
         }
     }
 }
@@ -186,35 +184,42 @@ impl Arbiter {
         let mut merged_contacts = Vec::<Contact>::with_capacity(2);
 
         for new_contact in new_contacts.iter() {
-            let mut k = -1;
-            let new_contact_feature = new_contact.map(|contact| contact.feature.value);
-            if new_contact_feature.is_some() {
-                for (j, contact) in self.contacts.iter().enumerate() {
-                    if Some(contact.map(|contact| contact.feature.value))
-                        == Some(new_contact_feature)
-                    {
-                        k = j as i32;
-                        break;
-                    }
-                }
-                if k > -1 {
-                    let c_old =
-                        self.contacts[k as usize].ok_or(ArbiterErrors::NoOldContactFound)?;
-                    let mut new_contact_ = new_contact.ok_or(ArbiterErrors::NoNewContactFound)?;
-                    if world_context.warm_starting {
-                        new_contact_.pn = c_old.pn;
-                        new_contact_.pt = c_old.pt;
-                        new_contact_.pnb = c_old.pnb;
-                    } else {
-                        new_contact_.pn = 0.0;
-                        new_contact_.pt = 0.0;
-                        new_contact_.pnb = 0.0;
-                    }
+            let new_info = match new_contact {
+                Some(c) => c,
+                None => continue,
+            };
 
-                    merged_contacts.push(Some(new_contact_));
-                } else {
-                    merged_contacts.push(*new_contact);
+            // Find the old contact closest to this new contact by position
+            let mut best_idx = -1;
+            let mut best_dist = f32::MAX;
+            for (j, old_contact) in self.contacts.iter().enumerate() {
+                if let Some(old) = old_contact {
+                    let diff = old.position - new_info.position;
+                    let d = diff.dot(diff);
+                    if d < best_dist {
+                        best_dist = d;
+                        best_idx = j as i32;
+                    }
                 }
+            }
+
+            if best_idx >= 0 {
+                let c_old = self.contacts[best_idx as usize]
+                    .as_ref()
+                    .ok_or(ArbiterErrors::NoOldContactFound)?;
+                let mut new_info = *new_info;
+                if world_context.warm_starting {
+                    new_info.pn = c_old.pn;
+                    new_info.pt = c_old.pt;
+                    new_info.pnb = c_old.pnb;
+                } else {
+                    new_info.pn = 0.0;
+                    new_info.pt = 0.0;
+                    new_info.pnb = 0.0;
+                }
+                merged_contacts.push(Some(new_info));
+            } else {
+                merged_contacts.push(*new_contact);
             }
         }
 
