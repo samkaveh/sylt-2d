@@ -192,9 +192,10 @@ impl Mat2x2 {
         if det == 0.0 {
             Err(MathErrors::NoInverse { matrix: *self })
         } else {
+            let inv_det = 1.0 / det;
             Ok(Self {
-                col1: Vec2::new(det * d, -det * c),
-                col2: Vec2::new(-det * b, det * a),
+                col1: Vec2::new(inv_det * d, -inv_det * c),
+                col2: Vec2::new(-inv_det * b, inv_det * a),
             })
         }
     }

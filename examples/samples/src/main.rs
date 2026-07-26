@@ -15,6 +15,8 @@ const ITERATIONS: u32 = 100;
 
 struct EguiSettings {
     scale: f32,
+    cam_x: f32,
+    cam_y: f32,
     color: Srgb<u8>,
     metaball_threshold: f32,
     metaball_resolution: usize,
@@ -27,6 +29,7 @@ struct EguiSettings {
     debug_show_polygons: bool,
     debug_show_open_chains: bool,
     debug_show_case_labels: bool,
+    barriers: bool,
 }
 
 struct Model {
@@ -63,6 +66,8 @@ fn model(app: &App) -> Model {
         egui,
         settings: EguiSettings {
             scale: 18.0,
+            cam_x: 0.0,
+            cam_y: 0.0,
             color: WHITE,
             metaball_threshold: 0.5,
             metaball_resolution: 50,
@@ -75,6 +80,7 @@ fn model(app: &App) -> Model {
             debug_show_polygons: false,
             debug_show_open_chains: false,
             debug_show_case_labels: false,
+            barriers: false,
         },
         is_first_frame: true,
         load_demo_flag: false,
@@ -621,7 +627,11 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
         "Demo 13: 2 Metaballs (Physics)",
         "Demo 14: Mixed Shapes",
     ];
-    egui::Window::new("Settings").show(&ctx, |ui| {
+    egui::Window::new("Settings")
+        .anchor(egui::Align2::RIGHT_TOP, [-4.0, 4.0])
+        .resizable(true)
+        .default_width(240.0)
+        .show(&ctx, |ui| {
         // Dropdown for selecting the demo
         ui.label("Select Demo:");
         egui::ComboBox::from_label("Demo Selection")
@@ -637,8 +647,23 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
             _model.load_demo_flag = true;
         }
         // Scale slider
-        ui.label("Scale:");
-        ui.add(egui::Slider::new(&mut settings.scale, 0.0..=1000.0));
+        ui.label("Zoom:");
+        ui.add(egui::Slider::new(&mut settings.scale, 1.0..=100.0));
+
+        ui.separator();
+        ui.label("Camera Pan:");
+        ui.horizontal(|ui| {
+            ui.label("X:");
+            ui.add(egui::Slider::new(&mut settings.cam_x, -30.0..=30.0));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Y:");
+            ui.add(egui::Slider::new(&mut settings.cam_y, -30.0..=30.0));
+        });
+        if ui.button("Reset Camera").clicked() {
+            settings.cam_x = 0.0;
+            settings.cam_y = 0.0;
+        }
 
         // Random color button
         let clicked = ui.button("Random color").clicked();
@@ -649,6 +674,12 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
 
         if ui.button("launch bomb").clicked() {
             _model.bomb = true;
+        }
+
+        let was_barriers = settings.barriers;
+        ui.checkbox(&mut settings.barriers, "Show side barriers");
+        if was_barriers != settings.barriers {
+            _model.load_demo_flag = true;
         }
 
         // Checkbox to enable a feature
@@ -705,6 +736,18 @@ fn update(_app: &App, _model: &mut Model, _update: Update) {
     });
 }
 
+fn add_side_barriers(model: &mut Model) {
+    let mut wall_l = Body::new(Vec2::new(0.5, 30.0), f32::MAX);
+    wall_l.position = Vec2::new(-12.0, 5.0);
+    wall_l.friction = 0.2;
+    model.world.add_body(wall_l);
+
+    let mut wall_r = Body::new(Vec2::new(0.5, 30.0), f32::MAX);
+    wall_r.position = Vec2::new(12.0, 5.0);
+    wall_r.friction = 0.2;
+    model.world.add_body(wall_r);
+}
+
 fn load_demo(model: &mut Model) {
     model.world.clear(); // Clear the current world bodies and joints
 
@@ -725,6 +768,10 @@ fn load_demo(model: &mut Model) {
         13 => demo14(model),
         _ => {}
     }
+
+    if model.settings.barriers {
+        add_side_barriers(model);
+    }
 }
 fn raw_window_event(_app: &App, model: &mut Model, event: &nannou::winit::event::WindowEvent) {
     // Let egui handle things like keyboard and mouse input.
@@ -732,7 +779,12 @@ fn raw_window_event(_app: &App, model: &mut Model, event: &nannou::winit::event:
 }
 
 fn key_pressed(_app: &App, model: &mut Model, key: Key) {
+    let pan_speed = 2.0;
     match key {
+        Key::W => model.settings.cam_y += pan_speed,
+        Key::S => model.settings.cam_y -= pan_speed,
+        Key::A => model.settings.cam_x -= pan_speed,
+        Key::D => model.settings.cam_x += pan_speed,
         Key::Right => {
             let _ = model.world.step(model.time_step);
         }
@@ -750,7 +802,9 @@ fn key_pressed(_app: &App, model: &mut Model, key: Key) {
 
 fn view(app: &App, _model: &Model, frame: Frame) {
     let draw = app.draw();
-    let draw = draw.scale(_model.settings.scale);
+    let draw = draw
+        .translate(vec3(_model.settings.cam_x, _model.settings.cam_y, 0.0))
+        .scale(_model.settings.scale);
     let settings = &_model.settings;
     draw.background().color(SLATEGREY);
 
