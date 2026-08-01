@@ -18,8 +18,7 @@ impl ConvexPolygon {
     /// Returns the vertex at the given index, handling wraparound.
     pub fn get_vertex(&self, i: isize) -> Vec2 {
         let n = self.get_num_vertices();
-        //let index = ((i % n as isize) + n as isize) as usize % n;
-        let index: usize = ((i + n as isize + 1) % n as isize) as usize;
+        let index = ((i % n as isize) + n as isize) as usize % n;
         self.vertices[index]
     }
 
@@ -53,7 +52,14 @@ impl ConvexPolygon {
     }
     // Orient the vertices counterclockwise
     fn orient_counterclockwise(&mut self) {
-        if self.area() < 0.0 {
+        let n = self.get_num_vertices();
+        let mut area = 0.0;
+        for i in 0..n {
+            let p1 = self.get_vertex(i as isize);
+            let p2 = self.get_vertex((i + 1) as isize);
+            area += p1.x * p2.y - p1.y * p2.x;
+        }
+        if area < 0.0 {
             self.vertices.reverse(); // Reverse the vertex order if the area is negative (clockwise)
         }
     }
@@ -152,7 +158,9 @@ impl ConvexPolygon {
             vertices: self
                 .vertices
                 .iter()
-                .map(|&vertex| rotation_mat * Vec2::new(vertex.x - center.x, vertex.y - center.y))
+                .map(|&vertex| {
+                    rotation_mat * Vec2::new(vertex.x - center.x, vertex.y - center.y) + center
+                })
                 .collect(),
         }
     }
@@ -266,6 +274,7 @@ impl Body {
             inv_moi = 0.0;
         }
         let width = convex_polygon.bounding_box();
+        let oriented_vertices = convex_polygon.get_vertices();
 
         let id = BODY_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
@@ -283,7 +292,7 @@ impl Body {
             inv_mass,
             inv_moi,
             moi,
-            vertices,
+            vertices: oriented_vertices,
             shape: Shape::ConvexPolygon,
             radius: 0.0,
         }

@@ -2,12 +2,18 @@ use crate::arbiter::{Contact, ContactInfo, Edges, FeaturePair};
 use crate::body::Body;
 use crate::math_utils::Vec2;
 
+/// Contact emission tolerance. Contacts are generated when surfaces are within
+/// this distance of touching so that a body landing exactly on a surface still
+/// produces a manifold (avoids float-rounding gaps that let the solver ignore
+/// the impact).
+const CONTACT_SLOP: f32 = 0.01;
+
 pub fn collide_circle_circle(contacts: &mut Vec<Contact>, body_a: &Body, body_b: &Body) -> i32 {
     let diff = body_b.position - body_a.position;
     let dist_sq = diff.dot(diff);
     let radius_sum = body_a.radius + body_b.radius;
 
-    if dist_sq > radius_sum * radius_sum {
+    if dist_sq > (radius_sum + CONTACT_SLOP) * (radius_sum + CONTACT_SLOP) {
         return 0;
     }
 
@@ -122,7 +128,7 @@ pub fn collide_circle_polygon(contacts: &mut Vec<Contact>, body_a: &Body, body_b
     }
 
     let dist = min_dist.sqrt();
-    if dist > radius {
+    if dist > radius + CONTACT_SLOP {
         return 0;
     }
 

@@ -289,12 +289,16 @@ impl Arbiter {
                         - body1.velocity
                         - body1.angular_velocity.cross(contact.r1);
 
-                    // Compute normal impulse
+                    // Compute normal impulse.
+                    // Aim for a post-impact separating velocity of -restitution*vn
+                    // (bounce). With restitution=0 this reduces to the standard
+                    // no-bounce result (-vn + bias).
                     let vn = dv.dot(contact.normal);
-                    let mut d_pn = contact.mass_normal * (-vn + contact.bias);
+                    let e = world_context.restitution;
+                    let mut d_pn = contact.mass_normal * (-(1.0 + e) * vn + contact.bias);
 
                     if world_context.accumulate_impulse {
-                        // Clamp accumulated impulse
+                        // Clamp accumulated impulse (can only push apart, never pull)
                         let pn_0 = contact.pn;
                         contact.pn = f32::max(pn_0 + d_pn, 0.0);
                         d_pn = contact.pn - pn_0;
