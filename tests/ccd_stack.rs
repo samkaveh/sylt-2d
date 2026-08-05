@@ -59,9 +59,5 @@ fn ccd_fast_box_does_not_fling_stack_or_tunnel() {
         "fast box flew off or tunneled, y={}",
         fp.y
     );
-    assert!(
-        fp.x.abs() < 20.0,
-        "fast box flew sideways, x={}",
-        fp.x
-    );
+    assert!(fp.x.abs() < 20.0, "fast box flew sideways, x={}", fp.x);
 }

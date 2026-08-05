@@ -208,6 +208,11 @@ pub struct Body {
     vertices: Vec<Vec2>,
     pub shape: Shape,
     pub radius: f32,
+    /// Persistent collision normal from the previous step for a circle body.
+    /// Used to break medial-axis ties in circle-vs-polygon so a wedged circle is
+    /// ejected consistently in one direction instead of oscillating between two
+    /// opposite faces of a thin body (e.g. a ball stuck on a flipper).
+    pub wedge_normal: Option<Vec2>,
 }
 
 static BODY_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -254,6 +259,7 @@ impl Body {
             vertices,
             shape: Shape::Box,
             radius: 0.0,
+            wedge_normal: None,
         }
     }
     pub fn new_polygon(vertices: Vec<Vec2>, mass: f32) -> Self {
@@ -295,6 +301,7 @@ impl Body {
             vertices: oriented_vertices,
             shape: Shape::ConvexPolygon,
             radius: 0.0,
+            wedge_normal: None,
         }
     }
 
@@ -333,6 +340,7 @@ impl Body {
             vertices,
             shape: Shape::Circle,
             radius,
+            wedge_normal: None,
         }
     }
 
@@ -343,6 +351,26 @@ impl Body {
     pub fn get_polygon(&self) -> ConvexPolygon {
         ConvexPolygon {
             vertices: self.vertices.clone(),
+        }
+    }
+
+    /// Approximate "throw radius" of the body: the farthest distance any surface
+    /// point can be from the body center (or the circle radius for circles).
+    /// Used to estimate how much of the surface moves per radian of rotation,
+    /// so a fast-spinning body can be flagged as a CCD bullet.
+    pub fn max_edge_speed_radius(&self) -> f32 {
+        match self.shape {
+            Shape::Circle => self.radius,
+            _ => {
+                let mut m = 0.0;
+                for v in &self.vertices {
+                    let d = v.length();
+                    if d > m {
+                        m = d;
+                    }
+                }
+                m
+            }
         }
     }
 

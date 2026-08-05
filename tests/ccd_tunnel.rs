@@ -35,9 +35,5 @@ fn fast_circle_does_not_tunnel_through_static_wall_with_ccd() {
     let pos = b.borrow().position;
     // Wall top is at y = -5 - 0.5 = -5.5. Ball radius 0.35 so its center should
     // never be below -5.85 (would mean it tunneled).
-    assert!(
-        pos.y > -5.85,
-        "ball tunneled through wall, y={}",
-        pos.y
-    );
+    assert!(pos.y > -5.85, "ball tunneled through wall, y={}", pos.y);
 }

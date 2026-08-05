@@ -16,13 +16,14 @@ const ITERATIONS: u32 = 120;
 const BALL_RADIUS: f32 = 0.35;
 const FLIPPER_LENGTH: f32 = 2.2;
 const FLIPPER_WIDTH: f32 = 0.45;
+const FLIPPER_UP_DELTA: f32 = 0.9;
 const PLUNGER_MAX_CHARGE: f32 = 45.0;
+const GRID_SNAP: f32 = 0.25;
 
 // Default Spawn Position inside the Plunger Lane
 fn default_ball_spawn() -> Vec2 {
     Vec2::new(7.0, -1.0)
 }
-
 
 fn vec2_normalize(v: Vec2) -> Vec2 {
     let len = v.length();
@@ -31,6 +32,79 @@ fn vec2_normalize(v: Vec2) -> Vec2 {
     } else {
         v * (1.0 / len)
     }
+}
+
+fn rotate_vec(v: Vec2, angle: f32) -> Vec2 {
+    Vec2::new(
+        v.x * angle.cos() - v.y * angle.sin(),
+        v.x * angle.sin() + v.y * angle.cos(),
+    )
+}
+
+fn snap_value(v: f32, step: f32) -> f32 {
+    if step <= 0.0 {
+        v
+    } else {
+        (v / step).round() * step
+    }
+}
+
+fn dist_point_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let len_sq = ab.dot(ab);
+    if len_sq < f32::EPSILON {
+        return (p - a).length();
+    }
+    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
+    (p - (a + ab * t)).length()
+}
+
+fn element_hit(elem: &BoardElement, pos: Vec2) -> bool {
+    match &elem.kind {
+        ElementKind::Wall { width, height } | ElementKind::Target { width, height, .. } => {
+            let local = rotate_vec(pos - elem.position, -elem.rotation);
+            local.x.abs() < width * 0.5 + 0.3 && local.y.abs() < height * 0.5 + 0.3
+        }
+        ElementKind::Bumper { radius, .. } | ElementKind::FluidPool { radius, .. } => {
+            (pos - elem.position).length() < *radius + 0.3
+        }
+        ElementKind::Flipper { side, length } => {
+            let offset_x = match side {
+                FlipperSide::Left => length * 0.45,
+                FlipperSide::Right => -length * 0.45,
+            };
+            let tip = elem.position + rotate_vec(Vec2::new(offset_x, 0.0), elem.rotation);
+            dist_point_segment(pos, elem.position, tip) < FLIPPER_WIDTH * 0.5 + 0.3
+        }
+        ElementKind::Drain { width } => {
+            let local = rotate_vec(pos - elem.position, -elem.rotation);
+            local.x.abs() < width * 0.5 + 0.3 && local.y.abs() < 0.45
+        }
+        _ => {
+            let dx = (pos.x - elem.position.x).abs();
+            let dy = (pos.y - elem.position.y).abs();
+            dx < 1.5 && dy < 1.5
+        }
+    }
+}
+
+fn element_extent(elem: &BoardElement) -> f32 {
+    match &elem.kind {
+        ElementKind::Wall { width, height } => width.max(*height) * 0.5,
+        ElementKind::Bumper { radius, .. } => *radius,
+        ElementKind::Flipper { length, .. } => length * 0.5,
+        ElementKind::Chain { total_length, .. } => total_length * 0.5,
+        ElementKind::FluidPool { radius, .. } => *radius,
+        ElementKind::SoftBridge { .. } => 1.0,
+        ElementKind::Target { width, height, .. } => width.max(*height) * 0.5,
+        ElementKind::Drain { width } => *width * 0.5,
+        ElementKind::BallSpawn => BALL_RADIUS,
+    }
+}
+
+fn rotation_handle_pos(elem: &BoardElement) -> Vec2 {
+    let extent = element_extent(elem).max(0.4);
+    elem.position + rotate_vec(Vec2::new(extent + 0.45, 0.0), elem.rotation)
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -154,6 +228,7 @@ struct EditorState {
     selected_id: Option<usize>,
     drag_start: Option<Vec2>,
     dragging: bool,
+    rotating: bool,
     wall_width: f32,
     wall_height: f32,
     bumper_radius: f32,
@@ -180,6 +255,10 @@ struct PlayState {
     ball_body_id: Option<usize>,
     flipper_left_id: Option<usize>,
     flipper_right_id: Option<usize>,
+    flipper_left_rest: f32,
+    flipper_left_up: f32,
+    flipper_right_rest: f32,
+    flipper_right_up: f32,
     plunger_body_id: Option<usize>,
     plunger_charge: f32,
     plunger_charging: bool,
@@ -199,6 +278,8 @@ struct EguiSettings {
     cam_x: f32,
     cam_y: f32,
     show_grid: bool,
+    snap_to_grid: bool,
+    grid_size: f32,
     show_contacts: bool,
     metaball_resolution: usize,
     metaball_threshold: f32,
@@ -237,14 +318,17 @@ fn model(app: &App) -> Model {
     let window = app.window(_window).unwrap();
     let egui = Egui::from_window(&window);
     let mut world = World::new(Vec2::new(0.0, -18.0), ITERATIONS);
-    // Give the ball a little bounce off walls/flippers so it doesn't dead-stop.
-    world.set_restitution(0.15);
+    // Give the ball a solid bounce off walls/flippers so an in-plane hit keeps
+    // its speed instead of dead-stopping (this is what made the ball feel slow
+    // after touching a flipper).
+    world.set_restitution(0.35);
 
     let editor = EditorState {
         tool: EditTool::Select,
         selected_id: None,
         drag_start: None,
         dragging: false,
+        rotating: false,
         wall_width: 2.0,
         wall_height: 0.5,
         bumper_radius: 0.7,
@@ -271,6 +355,10 @@ fn model(app: &App) -> Model {
         ball_body_id: None,
         flipper_left_id: None,
         flipper_right_id: None,
+        flipper_left_rest: 0.0,
+        flipper_left_up: 0.0,
+        flipper_right_rest: 0.0,
+        flipper_right_up: 0.0,
         plunger_body_id: None,
         plunger_charge: 0.0,
         plunger_charging: false,
@@ -294,7 +382,9 @@ fn model(app: &App) -> Model {
             scale: 24.0,
             cam_x: 0.0,
             cam_y: 8.5,
-            show_grid: false,
+            show_grid: true,
+            snap_to_grid: true,
+            grid_size: GRID_SNAP,
             show_contacts: false,
             metaball_resolution: 40,
             metaball_threshold: 0.5,
@@ -319,6 +409,17 @@ fn screen_to_world(app: &App, settings: &EguiSettings) -> Vec2 {
         mouse_x / settings.scale + settings.cam_x,
         mouse_y / settings.scale + settings.cam_y,
     )
+}
+
+fn snap_to_grid(settings: &EguiSettings, p: Vec2) -> Vec2 {
+    if settings.snap_to_grid {
+        Vec2::new(
+            snap_value(p.x, settings.grid_size),
+            snap_value(p.y, settings.grid_size),
+        )
+    } else {
+        p
+    }
 }
 
 fn spawn_ball(model: &mut Model) {
@@ -381,10 +482,14 @@ fn add_cabinet_walls(model: &mut Model) {
         let theta1 = std::f32::consts::PI * (i as f32 / num_segments as f32);
         let theta2 = std::f32::consts::PI * ((i + 1) as f32 / num_segments as f32);
 
-        let p1_inner = arch_center + Vec2::new(radius_inner * theta1.cos(), radius_inner * theta1.sin());
-        let p2_inner = arch_center + Vec2::new(radius_inner * theta2.cos(), radius_inner * theta2.sin());
-        let p2_outer = arch_center + Vec2::new(radius_outer * theta2.cos(), radius_outer * theta2.sin());
-        let p1_outer = arch_center + Vec2::new(radius_outer * theta1.cos(), radius_outer * theta1.sin());
+        let p1_inner =
+            arch_center + Vec2::new(radius_inner * theta1.cos(), radius_inner * theta1.sin());
+        let p2_inner =
+            arch_center + Vec2::new(radius_inner * theta2.cos(), radius_inner * theta2.sin());
+        let p2_outer =
+            arch_center + Vec2::new(radius_outer * theta2.cos(), radius_outer * theta2.sin());
+        let p1_outer =
+            arch_center + Vec2::new(radius_outer * theta1.cos(), radius_outer * theta1.sin());
 
         let poly_verts = vec![p1_inner, p2_inner, p2_outer, p1_outer];
         let mut arch_seg = Body::new_polygon(poly_verts, f32::MAX);
@@ -406,50 +511,6 @@ fn add_cabinet_walls(model: &mut Model) {
     right_inlane.rotation = 0.55;
     right_inlane.friction = 0.1;
     model.world.add_body(right_inlane);
-}
-
-fn spawn_flippers(model: &mut Model) {
-    // Left Flipper Pivot: (-3.2, -0.6). Flipper extends right towards center.
-    let pivot_left = Vec2::new(-3.2, -0.6);
-    let mut flipper_l = Body::new(Vec2::new(FLIPPER_LENGTH, FLIPPER_WIDTH), 15.0);
-    // At rotation = 0, box is centered at position. We want pivot to be at left edge of box (-FLIPPER_LENGTH/2, 0).
-    // Position of body center = pivot_left + Vec2(FLIPPER_LENGTH/2, 0) rotated by initial angle.
-    let init_rot_l = -0.4;
-    let local_offset_l = Vec2::new(FLIPPER_LENGTH * 0.45, 0.0);
-    let rot_mat_l = sylt_2d::math_utils::Mat2x2::new_from_angle(init_rot_l);
-    flipper_l.position = pivot_left + rot_mat_l * local_offset_l;
-    flipper_l.friction = 0.8;
-    flipper_l.rotation = init_rot_l;
-    model.play.flipper_left_id = Some(flipper_l.id);
-    model.world.add_body(flipper_l.clone());
-
-    let mut anchor_l = Body::new(Vec2::new(0.1, 0.1), f32::MAX);
-    anchor_l.position = pivot_left;
-    model.world.add_body(anchor_l.clone());
-
-    let mut joint_l = Joint::new(anchor_l, flipper_l, pivot_left, &model.world);
-    joint_l.softness = 0.02;
-    model.world.add_joint(joint_l);
-
-    // Right Flipper Pivot: (1.6, -0.6). Flipper extends left towards center.
-    let pivot_right = Vec2::new(1.6, -0.6);
-    let mut flipper_r = Body::new(Vec2::new(FLIPPER_LENGTH, FLIPPER_WIDTH), 15.0);
-    let init_rot_r = 0.4;
-    let local_offset_r = Vec2::new(-FLIPPER_LENGTH * 0.45, 0.0);
-    let rot_mat_r = sylt_2d::math_utils::Mat2x2::new_from_angle(init_rot_r);
-    flipper_r.position = pivot_right + rot_mat_r * local_offset_r;
-    flipper_r.friction = 0.8;
-    flipper_r.rotation = init_rot_r;
-    model.play.flipper_right_id = Some(flipper_r.id);
-    model.world.add_body(flipper_r.clone());
-
-    let mut anchor_r = Body::new(Vec2::new(0.1, 0.1), f32::MAX);
-    anchor_r.position = pivot_right;
-    model.world.add_body(anchor_r.clone());
-
-    let mut joint_r = Joint::new(anchor_r, flipper_r, pivot_right, &model.world);
-    joint_r.softness = 0.02;
-    model.world.add_joint(joint_r);
 }
 
 fn populate_default_board(model: &mut Model) {
@@ -531,6 +592,31 @@ fn populate_default_board(model: &mut Model) {
         color: [0.9, 0.9, 0.9],
     });
     model.next_id += 1;
+
+    // Flippers (pivots at the standard flipper spots)
+    model.elements.push(BoardElement {
+        id: model.next_id,
+        position: Vec2::new(-3.2, -0.6),
+        rotation: -0.4,
+        kind: ElementKind::Flipper {
+            side: FlipperSide::Left,
+            length: FLIPPER_LENGTH,
+        },
+        color: [0.1, 0.75, 0.5],
+    });
+    model.next_id += 1;
+
+    model.elements.push(BoardElement {
+        id: model.next_id,
+        position: Vec2::new(1.6, -0.6),
+        rotation: 0.4,
+        kind: ElementKind::Flipper {
+            side: FlipperSide::Right,
+            length: FLIPPER_LENGTH,
+        },
+        color: [0.1, 0.75, 0.5],
+    });
+    model.next_id += 1;
 }
 
 fn build_element_bodies(model: &mut Model) {
@@ -560,18 +646,24 @@ fn build_element_bodies(model: &mut Model) {
                     FlipperSide::Left => length * 0.45,
                     FlipperSide::Right => -length * 0.45,
                 };
-                let rot_init = match side {
-                    FlipperSide::Left => -0.45,
-                    FlipperSide::Right => 0.45,
-                };
+                let rot_init = elem.rotation;
+                let rot_mat = sylt_2d::math_utils::Mat2x2::new_from_angle(rot_init);
                 let mut flipper = Body::new(Vec2::new(*length, FLIPPER_WIDTH), 15.0);
-                flipper.position = pivot + Vec2::new(offset_x, 0.0);
+                flipper.position = pivot + rot_mat * Vec2::new(offset_x, 0.0);
                 flipper.friction = 0.6;
                 flipper.rotation = rot_init;
                 let body_id = flipper.id;
                 match side {
-                    FlipperSide::Left => model.play.flipper_left_id = Some(body_id),
-                    FlipperSide::Right => model.play.flipper_right_id = Some(body_id),
+                    FlipperSide::Left => {
+                        model.play.flipper_left_id = Some(body_id);
+                        model.play.flipper_left_rest = rot_init;
+                        model.play.flipper_left_up = rot_init + FLIPPER_UP_DELTA;
+                    }
+                    FlipperSide::Right => {
+                        model.play.flipper_right_id = Some(body_id);
+                        model.play.flipper_right_rest = rot_init;
+                        model.play.flipper_right_up = rot_init - FLIPPER_UP_DELTA;
+                    }
                 }
                 model.world.add_body(flipper.clone());
 
@@ -580,7 +672,9 @@ fn build_element_bodies(model: &mut Model) {
                 model.world.add_body(anchor.clone());
 
                 let mut joint = Joint::new(anchor, flipper, pivot, &model.world);
-                joint.softness = 0.02;
+                // Stiff hinge: keeps the flipper from bobbing around its pivot,
+                // which previously showed up as visible jitter in place.
+                joint.softness = 0.005;
                 model.world.add_joint(joint);
             }
             ElementKind::Chain {
@@ -651,7 +745,10 @@ fn build_element_bodies(model: &mut Model) {
                 let bias_factor = time_step * k / (d + time_step * k);
 
                 let dir = if total_dist > f32::EPSILON {
-                    Vec2::new((end.x - start.x) / total_dist, (end.y - start.y) / total_dist)
+                    Vec2::new(
+                        (end.x - start.x) / total_dist,
+                        (end.y - start.y) / total_dist,
+                    )
                 } else {
                     Vec2::new(1.0, 0.0)
                 };
@@ -682,7 +779,8 @@ fn build_element_bodies(model: &mut Model) {
                             start.x + dir.x * (i as f32 / *segments as f32) * total_dist,
                             start.y + dir.y * (i as f32 / *segments as f32) * total_dist,
                         );
-                        let mut joint = Joint::new(prev.clone(), plank.clone(), joint_pt, &model.world);
+                        let mut joint =
+                            Joint::new(prev.clone(), plank.clone(), joint_pt, &model.world);
                         joint.softness = *softness;
                         joint.bias_factor = bias_factor;
                         model.world.add_joint(joint);
@@ -730,6 +828,10 @@ fn enter_play_mode(model: &mut Model) {
     model.play.ball_body_id = None;
     model.play.flipper_left_id = None;
     model.play.flipper_right_id = None;
+    model.play.flipper_left_rest = 0.0;
+    model.play.flipper_left_up = 0.0;
+    model.play.flipper_right_rest = 0.0;
+    model.play.flipper_right_up = 0.0;
     model.play.plunger_body_id = None;
     model.play.plunger_charge = 0.0;
     model.play.flipper_left_active = false;
@@ -746,7 +848,6 @@ fn enter_play_mode(model: &mut Model) {
 
     add_cabinet_walls(model);
     add_plunger(model);
-    spawn_flippers(model);
     build_element_bodies(model);
     spawn_ball(model);
 }
@@ -763,6 +864,10 @@ fn enter_editor_mode(model: &mut Model) {
     if model.elements.is_empty() {
         populate_default_board(model);
     }
+    // Keep the board frame (walls, arch, plunger) visible as a reference
+    // while editing, so elements can be placed in context.
+    add_cabinet_walls(model);
+    add_plunger(model);
 }
 
 fn update(app: &App, model: &mut Model, _update: Update) {
@@ -836,69 +941,159 @@ fn update(app: &App, model: &mut Model, _update: Update) {
                         ui.label("Element Properties:");
                         match editor.tool {
                             EditTool::Wall => {
-                                ui.add(egui::Slider::new(&mut editor.wall_width, 0.5..=10.0).text("Width"));
-                                ui.add(egui::Slider::new(&mut editor.wall_height, 0.2..=5.0).text("Height"));
+                                ui.add(
+                                    egui::Slider::new(&mut editor.wall_width, 0.5..=10.0)
+                                        .text("Width"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.wall_height, 0.2..=5.0)
+                                        .text("Height"),
+                                );
                             }
                             EditTool::Bumper => {
-                                ui.add(egui::Slider::new(&mut editor.bumper_radius, 0.3..=2.0).text("Radius"));
-                                ui.add(egui::Slider::new(&mut editor.bumper_boost, 3.0..=35.0).text("Boost"));
-                                ui.add(egui::Slider::new(&mut editor.bumper_score, 50..=1000).text("Score"));
+                                ui.add(
+                                    egui::Slider::new(&mut editor.bumper_radius, 0.3..=2.0)
+                                        .text("Radius"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.bumper_boost, 3.0..=35.0)
+                                        .text("Boost"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.bumper_score, 50..=1000)
+                                        .text("Score"),
+                                );
                             }
                             EditTool::Chain => {
-                                ui.add(egui::Slider::new(&mut editor.chain_links, 2..=20).text("Links"));
-                                ui.add(egui::Slider::new(&mut editor.chain_length, 1.0..=10.0).text("Length"));
-                                ui.add(egui::Slider::new(&mut editor.chain_end_mass, 5.0..=50.0).text("End Mass"));
+                                ui.add(
+                                    egui::Slider::new(&mut editor.chain_links, 2..=20)
+                                        .text("Links"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.chain_length, 1.0..=10.0)
+                                        .text("Length"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.chain_end_mass, 5.0..=50.0)
+                                        .text("End Mass"),
+                                );
                             }
                             EditTool::FluidPool => {
-                                ui.add(egui::Slider::new(&mut editor.fluid_radius, 0.5..=5.0).text("Radius"));
-                                ui.add(egui::Slider::new(&mut editor.fluid_viscosity, 0.1..=3.0).text("Viscosity"));
+                                ui.add(
+                                    egui::Slider::new(&mut editor.fluid_radius, 0.5..=5.0)
+                                        .text("Radius"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.fluid_viscosity, 0.1..=3.0)
+                                        .text("Viscosity"),
+                                );
                                 ui.horizontal(|ui| {
-                                    for ft in [FluidType::Water, FluidType::Slime, FluidType::Lava, FluidType::Acid] {
-                                        if ui.selectable_label(editor.fluid_type == ft, ft.name()).clicked() {
+                                    for ft in [
+                                        FluidType::Water,
+                                        FluidType::Slime,
+                                        FluidType::Lava,
+                                        FluidType::Acid,
+                                    ] {
+                                        if ui
+                                            .selectable_label(editor.fluid_type == ft, ft.name())
+                                            .clicked()
+                                        {
                                             editor.fluid_type = ft;
                                         }
                                     }
                                 });
                             }
                             EditTool::SoftBridge => {
-                                ui.add(egui::Slider::new(&mut editor.bridge_segments, 3..=20).text("Segments"));
-                                ui.add(egui::Slider::new(&mut editor.bridge_softness, 0.005..=0.1).text("Softness"));
+                                ui.add(
+                                    egui::Slider::new(&mut editor.bridge_segments, 3..=20)
+                                        .text("Segments"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.bridge_softness, 0.005..=0.1)
+                                        .text("Softness"),
+                                );
                             }
                             EditTool::Target => {
-                                ui.add(egui::Slider::new(&mut editor.target_width, 0.5..=3.0).text("Width"));
-                                ui.add(egui::Slider::new(&mut editor.target_height, 0.1..=1.0).text("Height"));
-                                ui.add(egui::Slider::new(&mut editor.target_score, 50..=2000).text("Score"));
+                                ui.add(
+                                    egui::Slider::new(&mut editor.target_width, 0.5..=3.0)
+                                        .text("Width"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.target_height, 0.1..=1.0)
+                                        .text("Height"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut editor.target_score, 50..=2000)
+                                        .text("Score"),
+                                );
                             }
                             EditTool::Drain => {
-                                ui.add(egui::Slider::new(&mut editor.drain_width, 1.0..=10.0).text("Width"));
+                                ui.add(
+                                    egui::Slider::new(&mut editor.drain_width, 1.0..=10.0)
+                                        .text("Width"),
+                                );
                             }
-                            _ => { ui.label("Click on board to place element."); }
+                            _ => {
+                                ui.label("Click on board to place element.");
+                            }
                         }
                         if let Some(sel_id) = editor.selected_id {
                             ui.separator();
                             ui.label(format!("Selected: #{}", sel_id));
                             if let Some(elem) = model.elements.iter_mut().find(|e| e.id == sel_id) {
-                                ui.add(egui::Slider::new(&mut elem.rotation, -std::f32::consts::PI..=std::f32::consts::PI).text("Rotation"));
+                                ui.add(
+                                    egui::Slider::new(
+                                        &mut elem.rotation,
+                                        -std::f32::consts::PI..=std::f32::consts::PI,
+                                    )
+                                    .text("Rotation"),
+                                );
                             }
+                            ui.label("Tip: drag the yellow handle on the");
+                            ui.label("board to rotate the element.");
                             if ui.button("Delete Selected").clicked() {
                                 delete_selected = Some(sel_id);
                             }
                         }
                         ui.separator();
                         ui.label("Board Management:");
-                        ui.horizontal(|ui| { ui.label("Name:"); ui.text_edit_singleline(board_name); });
-                        if ui.button("Save Board").clicked() { do_save = true; }
-                        if ui.button("Load Board").clicked() { do_load = true; }
-                        if ui.button("Clear All").clicked() { do_clear = true; }
+                        ui.horizontal(|ui| {
+                            ui.label("Name:");
+                            ui.text_edit_singleline(board_name);
+                        });
+                        if ui.button("Save Board").clicked() {
+                            do_save = true;
+                        }
+                        if ui.button("Load Board").clicked() {
+                            do_load = true;
+                        }
+                        if ui.button("Clear All").clicked() {
+                            do_clear = true;
+                        }
                         ui.separator();
                         ui.label("View:");
                         ui.checkbox(&mut settings.show_grid, "Show Grid");
+                        ui.checkbox(&mut settings.snap_to_grid, "Snap to Grid");
+                        if settings.snap_to_grid {
+                            ui.add(
+                                egui::Slider::new(&mut settings.grid_size, 0.1..=1.0)
+                                    .text("Grid Size"),
+                            );
+                        }
                         ui.checkbox(&mut settings.show_contacts, "Show Contacts");
                         ui.add(egui::Slider::new(&mut settings.scale, 10.0..=50.0).text("Zoom"));
-                        ui.horizontal(|ui| { ui.label("X:"); ui.add(egui::Slider::new(&mut settings.cam_x, -20.0..=20.0)); });
-                        ui.horizontal(|ui| { ui.label("Y:"); ui.add(egui::Slider::new(&mut settings.cam_y, -5.0..=25.0)); });
+                        ui.horizontal(|ui| {
+                            ui.label("X:");
+                            ui.add(egui::Slider::new(&mut settings.cam_x, -20.0..=20.0));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Y:");
+                            ui.add(egui::Slider::new(&mut settings.cam_y, -5.0..=25.0));
+                        });
                         ui.separator();
-                        if ui.button("▶ Play Test  [TAB]").clicked() { switch_to_play = true; }
+                        if ui.button("▶ Play Test  [TAB]").clicked() {
+                            switch_to_play = true;
+                        }
                     });
             }
 
@@ -906,10 +1101,20 @@ fn update(app: &App, model: &mut Model, _update: Update) {
                 model.elements.retain(|e| e.id != sel_id);
                 model.editor.selected_id = None;
             }
-            if do_save { model.save_board_flag = true; }
-            if do_load { model.load_board_flag = true; }
-            if do_clear { model.elements.clear(); model.editor.selected_id = None; }
-            if switch_to_play { model.mode = GameMode::Play; enter_play_mode(model); }
+            if do_save {
+                model.save_board_flag = true;
+            }
+            if do_load {
+                model.load_board_flag = true;
+            }
+            if do_clear {
+                model.elements.clear();
+                model.editor.selected_id = None;
+            }
+            if switch_to_play {
+                model.mode = GameMode::Play;
+                enter_play_mode(model);
+            }
         }
         GameMode::Play => {
             let mut switch_to_edit = false;
@@ -925,7 +1130,11 @@ fn update(app: &App, model: &mut Model, _update: Update) {
                     .show(&ctx, |ui| {
                         ui.heading("🎰 PINBALL ARCADE");
                         ui.separator();
-                        ui.label(egui::RichText::new(format!("SCORE: {}", play.score)).size(18.0).color(egui::Color32::YELLOW));
+                        ui.label(
+                            egui::RichText::new(format!("SCORE: {}", play.score))
+                                .size(18.0)
+                                .color(egui::Color32::YELLOW),
+                        );
                         ui.label(format!("HIGH SCORE: {}", play.high_score));
                         ui.label(format!("BALLS REMAINING: {}", play.balls_remaining));
                         ui.separator();
@@ -937,30 +1146,35 @@ fn update(app: &App, model: &mut Model, _update: Update) {
                         ui.separator();
                         if play.game_over {
                             ui.colored_label(egui::Color32::RED, "💥 GAME OVER 💥");
-                            if ui.button("🔄 Restart").clicked() { do_restart = true; }
+                            if ui.button("🔄 Restart").clicked() {
+                                do_restart = true;
+                            }
                         }
                         ui.separator();
                         ui.label("View:");
                         ui.add(egui::Slider::new(&mut settings.scale, 10.0..=50.0).text("Zoom"));
                         ui.checkbox(&mut settings.show_contacts, "Show Contacts");
                         ui.separator();
-                        if ui.button("✏ Edit Mode  [TAB]").clicked() { switch_to_edit = true; }
+                        if ui.button("✏ Edit Mode  [TAB]").clicked() {
+                            switch_to_edit = true;
+                        }
                     });
             }
 
-            if do_restart { enter_play_mode(model); }
-            if switch_to_edit { model.mode = GameMode::Editor; enter_editor_mode(model); }
+            if do_restart {
+                enter_play_mode(model);
+            }
+            if switch_to_edit {
+                model.mode = GameMode::Editor;
+                enter_editor_mode(model);
+            }
         }
     }
 }
 
 fn apply_fluid_drag(model: &mut Model) {
     if let Some(ball_id) = model.play.ball_body_id {
-        let ball_body_opt = model
-            .world
-            .bodies
-            .iter()
-            .find(|b| b.borrow().id == ball_id);
+        let ball_body_opt = model.world.bodies.iter().find(|b| b.borrow().id == ball_id);
         if let Some(ball_body) = ball_body_opt {
             let ball_pos = ball_body.borrow().position;
             let mut total_drag = Vec2::new(0.0, 0.0);
@@ -1026,11 +1240,7 @@ fn detect_scoring(model: &mut Model) {
                 } => {
                     let dist = (elem.position - ball_pos).length();
                     if dist < *radius + BALL_RADIUS + 0.15 {
-                        let body_opt = model
-                            .world
-                            .bodies
-                            .iter()
-                            .find(|b| b.borrow().id == ball_id);
+                        let body_opt = model.world.bodies.iter().find(|b| b.borrow().id == ball_id);
                         if let Some(body_ref) = body_opt {
                             let mut body = body_ref.borrow_mut();
                             let dir = vec2_normalize(body.position - elem.position);
@@ -1075,56 +1285,65 @@ fn detect_scoring(model: &mut Model) {
 }
 
 fn apply_flippers(model: &mut Model) {
-    // Left Flipper setup: pivot at (-3.2, -0.6), base resting rot = -0.40, up target = 0.50
-    let min_rot_l = -0.40f32;
-    let max_rot_l = 0.50f32;
+    let target_left = if model.play.flipper_left_active {
+        model.play.flipper_left_up
+    } else {
+        model.play.flipper_left_rest
+    };
+    let target_right = if model.play.flipper_right_active {
+        model.play.flipper_right_up
+    } else {
+        model.play.flipper_right_rest
+    };
+    let left_offset = Vec2::new(FLIPPER_LENGTH * 0.45, 0.0);
+    let right_offset = Vec2::new(-FLIPPER_LENGTH * 0.45, 0.0);
 
     if let Some(left_id) = model.play.flipper_left_id {
         if let Some(body_ref) = model.world.bodies.iter().find(|b| b.borrow().id == left_id) {
-            let mut body = body_ref.borrow_mut();
-            // Damping to prevent oscillation
-            body.angular_velocity *= 0.92;
-            if model.play.flipper_left_active {
-                if body.rotation < max_rot_l {
-                    body.angular_velocity += 28.0;
-                }
-            } else {
-                if body.rotation > min_rot_l {
-                    body.angular_velocity -= 22.0;
-                }
-            }
-            body.rotation = body.rotation.clamp(min_rot_l, max_rot_l);
-            // Stop exactly at limits
-            if (body.rotation <= min_rot_l && body.angular_velocity < 0.0)
-                || (body.rotation >= max_rot_l && body.angular_velocity > 0.0) {
-                body.angular_velocity = 0.0;
-            }
+            drive_flipper(&mut body_ref.borrow_mut(), target_left, left_offset);
         }
     }
-
-    // Right Flipper setup: pivot at (1.6, -0.6), base resting rot = 0.40, up target = -0.50
-    let min_rot_r = -0.50f32;
-    let max_rot_r = 0.40f32;
-
     if let Some(right_id) = model.play.flipper_right_id {
-        if let Some(body_ref) = model.world.bodies.iter().find(|b| b.borrow().id == right_id) {
-            let mut body = body_ref.borrow_mut();
-            body.angular_velocity *= 0.92;
-            if model.play.flipper_right_active {
-                if body.rotation > min_rot_r {
-                    body.angular_velocity -= 28.0;
-                }
-            } else {
-                if body.rotation < max_rot_r {
-                    body.angular_velocity += 22.0;
-                }
-            }
-            body.rotation = body.rotation.clamp(min_rot_r, max_rot_r);
-            if (body.rotation <= min_rot_r && body.angular_velocity < 0.0)
-                || (body.rotation >= max_rot_r && body.angular_velocity > 0.0) {
-                body.angular_velocity = 0.0;
-            }
+        if let Some(body_ref) = model
+            .world
+            .bodies
+            .iter()
+            .find(|b| b.borrow().id == right_id)
+        {
+            drive_flipper(&mut body_ref.borrow_mut(), target_right, right_offset);
         }
+    }
+}
+
+/// Drives a flipper toward a target rotation as a rigid body rotating about its
+/// *pivot* (not its center).
+///
+/// A first-order servo sets the angular velocity proportional to the remaining
+/// angle error (monotonic, never overshoots, never oscillates) and ALSO sets the
+/// matching orbital linear velocity of the flipper center. Driving the angular
+/// velocity alone makes the off-center hinge joint violently counteract it every
+/// frame (felt as heaviness/sluggishness); keeping the pivot point stationary
+/// gives the joint nothing to fight, so the flipper snaps crisply to its stop.
+/// A tight dead-zone pins it exactly at rest and full-up.
+fn drive_flipper(body: &mut Body, target: f32, pivot_offset: Vec2) {
+    const PROPORTIONAL_GAIN: f32 = 45.0;
+    const MAX_SPEED: f32 = 34.0;
+    const SETTLE_ANGLE: f32 = 0.015;
+    const SETTLE_SPEED: f32 = 0.25;
+
+    let err = target - body.rotation;
+    let av = (err * PROPORTIONAL_GAIN).clamp(-MAX_SPEED, MAX_SPEED);
+    body.angular_velocity = av;
+
+    let pivot = body.position - rotate_vec(pivot_offset, body.rotation);
+    let to_center = body.position - pivot;
+    body.velocity = Vec2::new(-to_center.y, to_center.x) * av;
+
+    // Settle dead-zone: near the target and nearly stopped, snap to rest.
+    if err.abs() < SETTLE_ANGLE && av.abs() < SETTLE_SPEED {
+        body.angular_velocity = 0.0;
+        body.velocity = Vec2::new(0.0, 0.0);
+        body.rotation = target;
     }
 }
 
@@ -1160,48 +1379,40 @@ fn mouse_pressed(_app: &App, model: &mut Model, button: MouseButton) {
     }
 
     if model.mode == GameMode::Editor && button == MouseButton::Left {
-        let pos = model.mouse_world;
+        let raw_pos = model.mouse_world;
+        let pos = snap_to_grid(&model.settings, raw_pos);
 
         match model.editor.tool {
             EditTool::Select => {
+                // Grab the rotation handle of the selected element before hit-testing.
+                if let Some(sel_id) = model.editor.selected_id {
+                    if let Some(elem) = model.elements.iter().find(|e| e.id == sel_id) {
+                        if (raw_pos - rotation_handle_pos(elem)).length() < 0.35 {
+                            model.editor.rotating = true;
+                            model.editor.dragging = false;
+                            model.editor.drag_start = None;
+                            return;
+                        }
+                    }
+                }
                 let clicked_id = model.elements.iter().rev().find_map(|e| {
-                    let hit = match &e.kind {
-                        ElementKind::Wall { width, height } => {
-                            let dx = (pos.x - e.position.x).abs();
-                            let dy = (pos.y - e.position.y).abs();
-                            dx < width * 0.5 + 0.3 && dy < height * 0.5 + 0.3
-                        }
-                        ElementKind::Bumper { radius, .. } => {
-                            (pos - e.position).length() < *radius + 0.3
-                        }
-                        _ => {
-                            let dx = (pos.x - e.position.x).abs();
-                            let dy = (pos.y - e.position.y).abs();
-                            dx < 1.5 && dy < 1.5
-                        }
-                    };
-                    if hit { Some(e.id) } else { None }
+                    if element_hit(e, raw_pos) {
+                        Some(e.id)
+                    } else {
+                        None
+                    }
                 });
                 model.editor.selected_id = clicked_id;
-                model.editor.drag_start = Some(pos);
+                model.editor.drag_start = Some(raw_pos);
                 model.editor.dragging = clicked_id.is_some();
             }
             EditTool::Delete => {
                 let clicked_id = model.elements.iter().rev().find_map(|e| {
-                    let hit = match &e.kind {
-                        ElementKind::Bumper { radius, .. } => {
-                            (pos - e.position).length() < *radius + 0.3
-                        }
-                        ElementKind::FluidPool { radius, .. } => {
-                            (pos - e.position).length() < *radius + 0.3
-                        }
-                        _ => {
-                            let dx = (pos.x - e.position.x).abs();
-                            let dy = (pos.y - e.position.y).abs();
-                            dx < 1.5 && dy < 1.5
-                        }
-                    };
-                    if hit { Some(e.id) } else { None }
+                    if element_hit(e, raw_pos) {
+                        Some(e.id)
+                    } else {
+                        None
+                    }
                 });
                 if let Some(id) = clicked_id {
                     model.elements.retain(|e| e.id != id);
@@ -1276,9 +1487,7 @@ fn mouse_pressed(_app: &App, model: &mut Model, button: MouseButton) {
                         height: target_height,
                         score: target_score,
                     },
-                    EditTool::Drain => ElementKind::Drain {
-                        width: drain_width,
-                    },
+                    EditTool::Drain => ElementKind::Drain { width: drain_width },
                     EditTool::BallSpawn => ElementKind::BallSpawn,
                     _ => return,
                 };
@@ -1286,7 +1495,6 @@ fn mouse_pressed(_app: &App, model: &mut Model, button: MouseButton) {
                 let rotation = match model.editor.tool {
                     EditTool::FlipperLeft => -0.45,
                     EditTool::FlipperRight => 0.45,
-                    EditTool::Target => 0.0,
                     _ => 0.0,
                 };
                 let id = model.next_id;
@@ -1306,16 +1514,38 @@ fn mouse_pressed(_app: &App, model: &mut Model, button: MouseButton) {
 fn mouse_released(_app: &App, model: &mut Model, _button: MouseButton) {
     if model.mode == GameMode::Editor {
         model.editor.dragging = false;
+        model.editor.rotating = false;
         model.editor.drag_start = None;
     }
 }
 
 fn mouse_moved(_app: &App, model: &mut Model, _pos: Point2) {
-    if model.mode == GameMode::Editor && model.editor.dragging {
+    if model.mode != GameMode::Editor {
+        return;
+    }
+    if model.editor.rotating {
         if let Some(sel_id) = model.editor.selected_id {
             if let Some(elem) = model.elements.iter_mut().find(|e| e.id == sel_id) {
-                let delta = model.mouse_world - model.editor.drag_start.unwrap_or(model.mouse_world);
-                elem.position = elem.position + delta;
+                let delta = model.mouse_world - elem.position;
+                elem.rotation = delta.y.atan2(delta.x);
+            }
+        }
+        return;
+    }
+    if model.editor.dragging {
+        if let Some(sel_id) = model.editor.selected_id {
+            if let Some(elem) = model.elements.iter_mut().find(|e| e.id == sel_id) {
+                let delta =
+                    model.mouse_world - model.editor.drag_start.unwrap_or(model.mouse_world);
+                let new_pos = elem.position + delta;
+                elem.position = if model.settings.snap_to_grid {
+                    Vec2::new(
+                        snap_value(new_pos.x, model.settings.grid_size),
+                        snap_value(new_pos.y, model.settings.grid_size),
+                    )
+                } else {
+                    new_pos
+                };
                 model.editor.drag_start = Some(model.mouse_world);
             }
         }
@@ -1324,18 +1554,16 @@ fn mouse_moved(_app: &App, model: &mut Model, _pos: Point2) {
 
 fn key_pressed(_app: &App, model: &mut Model, key: Key) {
     match key {
-        Key::Tab => {
-            match model.mode {
-                GameMode::Editor => {
-                    model.mode = GameMode::Play;
-                    enter_play_mode(model);
-                }
-                GameMode::Play => {
-                    model.mode = GameMode::Editor;
-                    enter_editor_mode(model);
-                }
+        Key::Tab => match model.mode {
+            GameMode::Editor => {
+                model.mode = GameMode::Play;
+                enter_play_mode(model);
             }
-        }
+            GameMode::Play => {
+                model.mode = GameMode::Editor;
+                enter_editor_mode(model);
+            }
+        },
         Key::A | Key::Left => {
             if model.mode == GameMode::Play {
                 model.play.flipper_left_active = true;
@@ -1401,11 +1629,33 @@ fn view(app: &App, model: &Model, frame: Frame) {
         .stroke_weight(0.15);
 
     if model.settings.show_grid {
-        draw_grid(&draw);
+        draw_grid(&draw, &model.settings);
     }
 
     if model.mode == GameMode::Editor {
         draw_editor_elements(model, &draw);
+        draw_placement_preview(model, &draw);
+
+        // Cursor crosshair + snapped coordinates readout.
+        let snapped = snap_to_grid(&model.settings, model.mouse_world);
+        draw.line()
+            .start(pt2(snapped.x - 0.12, snapped.y))
+            .end(pt2(snapped.x + 0.12, snapped.y))
+            .weight(0.03)
+            .color(rgba(1.0, 1.0, 0.4, 0.9));
+        draw.line()
+            .start(pt2(snapped.x, snapped.y - 0.12))
+            .end(pt2(snapped.x, snapped.y + 0.12))
+            .weight(0.03)
+            .color(rgba(1.0, 1.0, 0.4, 0.9));
+        draw_world_label(
+            &draw,
+            &model.settings,
+            model.mouse_world + Vec2::new(0.6, 0.5),
+            &format!("({:.2}, {:.2})", snapped.x, snapped.y),
+            13.0,
+            rgba(1.0, 1.0, 0.6, 0.9),
+        );
     }
 
     for (num, body) in model.world.iter_bodies().enumerate() {
@@ -1499,7 +1749,10 @@ fn view(app: &App, model: &Model, frame: Frame) {
 
                     // Highlight spec dot
                     draw.ellipse()
-                        .x_y(body.position.x + body.radius * 0.3, body.position.y + body.radius * 0.3)
+                        .x_y(
+                            body.position.x + body.radius * 0.3,
+                            body.position.y + body.radius * 0.3,
+                        )
                         .w_h(body.radius * 0.6, body.radius * 0.6)
                         .color(WHITE);
                 } else if model.play.metaball_bodies.contains(&body.id) {
@@ -1553,13 +1806,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
             .world
             .iter_bodies()
             .filter(|b| model.play.metaball_bodies.contains(&b.id))
-            .map(|b| {
-                Metaball::new(
-                    Vec2::new(b.position.x, b.position.y),
-                    b.radius,
-                    1.0,
-                )
-            })
+            .map(|b| Metaball::new(Vec2::new(b.position.x, b.position.y), b.radius, 1.0))
             .collect();
 
         if !metaballs.is_empty() {
@@ -1635,181 +1882,250 @@ fn view(app: &App, model: &Model, frame: Frame) {
     model.egui.draw_to_frame(&frame).unwrap();
 }
 
-fn draw_grid(draw: &nannou::Draw) {
+fn draw_grid(draw: &nannou::Draw, settings: &EguiSettings) {
+    let step = settings.grid_size.max(0.05);
     let x_range = -15.0f32..15.0f32;
     let y_range = -5.0f32..25.0f32;
 
+    // Minor grid lines at the snap step.
+    let mut gx = snap_value(x_range.start, step);
+    while gx <= x_range.end {
+        draw.line()
+            .start(pt2(gx, y_range.start))
+            .end(pt2(gx, y_range.end))
+            .weight(0.008)
+            .color(rgba(1.0, 1.0, 1.0, 0.05));
+        gx += step;
+    }
+    let mut gy = snap_value(y_range.start, step);
+    while gy <= y_range.end {
+        draw.line()
+            .start(pt2(x_range.start, gy))
+            .end(pt2(x_range.end, gy))
+            .weight(0.008)
+            .color(rgba(1.0, 1.0, 1.0, 0.05));
+        gy += step;
+    }
+
+    // Major grid lines every whole unit.
     for x in (x_range.start as i32)..=(x_range.end as i32) {
         draw.line()
             .start(pt2(x as f32, y_range.start))
             .end(pt2(x as f32, y_range.end))
-            .weight(0.01)
-            .color(rgba(1.0, 1.0, 1.0, 0.06));
+            .weight(0.012)
+            .color(rgba(1.0, 1.0, 1.0, 0.1));
     }
     for y in (y_range.start as i32)..=(y_range.end as i32) {
         draw.line()
             .start(pt2(x_range.start, y as f32))
             .end(pt2(x_range.end, y as f32))
-            .weight(0.01)
-            .color(rgba(1.0, 1.0, 1.0, 0.06));
+            .weight(0.012)
+            .color(rgba(1.0, 1.0, 1.0, 0.1));
+    }
+
+    // Axes
+    draw.line()
+        .start(pt2(0.0, y_range.start))
+        .end(pt2(0.0, y_range.end))
+        .weight(0.02)
+        .color(rgba(0.4, 0.6, 1.0, 0.4));
+    draw.line()
+        .start(pt2(x_range.start, 0.0))
+        .end(pt2(x_range.end, 0.0))
+        .weight(0.02)
+        .color(rgba(0.4, 0.6, 1.0, 0.4));
+}
+
+/// Draw a small text label anchored to a world-space position. The font size is
+/// scaled to the current zoom so the label stays a reasonable on-screen size.
+fn draw_world_label(
+    draw: &nannou::Draw,
+    settings: &EguiSettings,
+    world_pos: Vec2,
+    text: &str,
+    px: f32,
+    color: Rgba,
+) {
+    let font_size = ((px / settings.scale).round()).max(1.0) as u32;
+    draw.text(text)
+        .x_y(world_pos.x, world_pos.y)
+        .font_size(font_size)
+        .color(color)
+        .align_text_middle_y()
+        .center_justify();
+}
+
+fn draw_element_shape(elem: &BoardElement, draw: &nannou::Draw, alpha: f32) {
+    let c = elem.color;
+    let col = rgba(c[0], c[1], c[2], alpha);
+    let stroke_col = rgba(1.0, 1.0, 1.0, alpha);
+
+    match &elem.kind {
+        ElementKind::Wall { width, height } => {
+            draw.rect()
+                .x_y(elem.position.x, elem.position.y)
+                .w_h(*width, *height)
+                .rotate(elem.rotation)
+                .color(col)
+                .stroke(stroke_col)
+                .stroke_weight(0.03);
+        }
+        ElementKind::Bumper { radius, .. } => {
+            draw.ellipse()
+                .x_y(elem.position.x, elem.position.y)
+                .w_h(*radius * 2.0, *radius * 2.0)
+                .color(col)
+                .stroke(stroke_col)
+                .stroke_weight(0.03);
+            draw.ellipse()
+                .x_y(elem.position.x, elem.position.y)
+                .w_h(*radius * 1.2, *radius * 1.2)
+                .color(rgba(1.0, 1.0, 1.0, 0.3 * alpha));
+        }
+        ElementKind::Flipper { side, length } => {
+            let offset_x = match side {
+                FlipperSide::Left => *length * 0.45,
+                FlipperSide::Right => -*length * 0.45,
+            };
+            let angle = elem.rotation;
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+            let cx = elem.position.x + offset_x * cos_a;
+            let cy = elem.position.y + offset_x * sin_a;
+            draw.rect()
+                .x_y(cx, cy)
+                .w_h(*length, FLIPPER_WIDTH)
+                .rotate(angle)
+                .color(col)
+                .stroke(stroke_col)
+                .stroke_weight(0.03);
+            // Pivot point
+            draw.ellipse()
+                .x_y(elem.position.x, elem.position.y)
+                .radius(0.15)
+                .color(rgba(1.0, 1.0, 1.0, alpha));
+        }
+        ElementKind::Chain {
+            link_count,
+            total_length,
+            ..
+        } => {
+            let link_h = total_length / *link_count as f32;
+            for i in 0..*link_count {
+                let y = elem.position.y - i as f32 * link_h;
+                draw.rect()
+                    .x_y(elem.position.x, y)
+                    .w_h(0.3, link_h * 0.85)
+                    .color(col)
+                    .stroke(stroke_col)
+                    .stroke_weight(0.02);
+            }
+            draw.ellipse()
+                .x_y(elem.position.x, elem.position.y)
+                .radius(0.15)
+                .color(rgba(1.0, 1.0, 1.0, alpha));
+        }
+        ElementKind::FluidPool { radius, fluid, .. } => {
+            let fluid_color = match fluid {
+                FluidType::Water => rgba(0.2, 0.5, 0.9, 0.4 * alpha),
+                FluidType::Slime => rgba(0.3, 0.8, 0.2, 0.4 * alpha),
+                FluidType::Lava => rgba(0.9, 0.3, 0.1, 0.4 * alpha),
+                FluidType::Acid => rgba(0.7, 0.9, 0.1, 0.4 * alpha),
+            };
+            draw.ellipse()
+                .x_y(elem.position.x, elem.position.y)
+                .w_h(*radius * 2.0, *radius * 2.0)
+                .color(fluid_color)
+                .stroke(stroke_col)
+                .stroke_weight(0.03);
+            draw.ellipse()
+                .x_y(elem.position.x, elem.position.y)
+                .w_h(*radius * 0.6, *radius * 0.6)
+                .color(rgba(1.0, 1.0, 1.0, 0.2 * alpha));
+        }
+        ElementKind::SoftBridge {
+            end_x, segments, ..
+        } => {
+            let start = elem.position;
+            let end = Vec2::new(*end_x, elem.position.y);
+            draw.line()
+                .start(pt2(start.x, start.y))
+                .end(pt2(end.x, end.y))
+                .weight(0.15)
+                .color(col);
+            draw.ellipse()
+                .x_y(start.x, start.y)
+                .radius(0.12)
+                .color(rgba(1.0, 1.0, 1.0, alpha));
+            draw.ellipse()
+                .x_y(end.x, end.y)
+                .radius(0.12)
+                .color(rgba(1.0, 1.0, 1.0, alpha));
+            for i in 0..*segments {
+                let t = i as f32 / *segments as f32;
+                let x = start.x + t * (end.x - start.x);
+                draw.line()
+                    .start(pt2(x, start.y - 0.15))
+                    .end(pt2(x, start.y + 0.15))
+                    .weight(0.04)
+                    .color(rgba(1.0, 1.0, 1.0, 0.4 * alpha));
+            }
+        }
+        ElementKind::Target { width, height, .. } => {
+            draw.rect()
+                .x_y(elem.position.x, elem.position.y)
+                .w_h(*width, *height)
+                .rotate(elem.rotation)
+                .color(col)
+                .stroke(stroke_col)
+                .stroke_weight(0.03);
+        }
+        ElementKind::Drain { width } => {
+            draw.rect()
+                .x_y(elem.position.x, elem.position.y)
+                .w_h(*width, 0.3)
+                .color(rgba(0.8, 0.1, 0.1, 0.5 * alpha))
+                .stroke(rgba(1.0, 0.0, 0.0, alpha))
+                .stroke_weight(0.05);
+        }
+        ElementKind::BallSpawn => {
+            draw.ellipse()
+                .x_y(elem.position.x, elem.position.y)
+                .radius(BALL_RADIUS)
+                .color(rgba(1.0, 1.0, 1.0, 0.5 * alpha))
+                .stroke(stroke_col)
+                .stroke_weight(0.03);
+        }
     }
 }
 
 fn draw_editor_elements(model: &Model, draw: &nannou::Draw) {
     for elem in &model.elements {
-        let c = elem.color;
-        let col = rgb(c[0], c[1], c[2]);
+        draw_element_shape(elem, draw, 1.0);
 
+        // Small labels for scoring/identifier elements.
         match &elem.kind {
-            ElementKind::Wall { width, height } => {
-                draw.rect()
-                    .x_y(elem.position.x, elem.position.y)
-                    .w_h(*width, *height)
-                    .rotate(elem.rotation)
-                    .color(col)
-                    .stroke(WHITE)
-                    .stroke_weight(0.03);
-            }
-            ElementKind::Bumper { radius, .. } => {
-                draw.ellipse()
-                    .x_y(elem.position.x, elem.position.y)
-                    .w_h(*radius * 2.0, *radius * 2.0)
-                    .color(col)
-                    .stroke(WHITE)
-                    .stroke_weight(0.03);
-                draw.ellipse()
-                    .x_y(elem.position.x, elem.position.y)
-                    .w_h(*radius * 1.2, *radius * 1.2)
-                    .color(rgba(1.0, 1.0, 1.0, 0.3));
-            }
-            ElementKind::Flipper { side, length } => {
-                let offset_x = match side {
-                    FlipperSide::Left => *length * 0.45,
-                    FlipperSide::Right => -*length * 0.45,
-                };
-                let angle = elem.rotation;
-                let cos_a = angle.cos();
-                let sin_a = angle.sin();
-                let cx = elem.position.x + offset_x * cos_a - 0.0 * sin_a;
-                let cy = elem.position.y + offset_x * sin_a + 0.0 * cos_a;
-                draw.rect()
-                    .x_y(cx, cy)
-                    .w_h(*length, FLIPPER_WIDTH)
-                    .rotate(elem.rotation)
-                    .color(col)
-                    .stroke(WHITE)
-                    .stroke_weight(0.03);
-                // Pivot point
-                draw.ellipse()
-                    .x_y(elem.position.x, elem.position.y)
-                    .radius(0.15)
-                    .color(WHITE);
-            }
-            ElementKind::Chain {
-                link_count,
-                total_length,
-                ..
-            } => {
-                let link_h = total_length / *link_count as f32;
-                for i in 0..*link_count {
-                    let y = elem.position.y - i as f32 * link_h;
-                    draw.rect()
-                        .x_y(elem.position.x, y)
-                        .w_h(0.3, link_h * 0.85)
-                        .color(col)
-                        .stroke(WHITE)
-                        .stroke_weight(0.02);
-                }
-                draw.ellipse()
-                    .x_y(elem.position.x, elem.position.y)
-                    .radius(0.15)
-                    .color(WHITE);
-            }
-            ElementKind::FluidPool { radius, fluid, .. } => {
-                let fluid_color = match fluid {
-                    FluidType::Water => rgba(0.2, 0.5, 0.9, 0.4),
-                    FluidType::Slime => rgba(0.3, 0.8, 0.2, 0.4),
-                    FluidType::Lava => rgba(0.9, 0.3, 0.1, 0.4),
-                    FluidType::Acid => rgba(0.7, 0.9, 0.1, 0.4),
-                };
-                draw.ellipse()
-                    .x_y(elem.position.x, elem.position.y)
-                    .w_h(*radius * 2.0, *radius * 2.0)
-                    .color(fluid_color)
-                    .stroke(WHITE)
-                    .stroke_weight(0.03);
-                draw.ellipse()
-                    .x_y(elem.position.x, elem.position.y)
-                    .w_h(*radius * 0.6, *radius * 0.6)
-                    .color(rgba(1.0, 1.0, 1.0, 0.2));
-            }
-            ElementKind::SoftBridge {
-                end_x,
-                segments,
-                ..
-            } => {
-                let start = elem.position;
-                let end = Vec2::new(*end_x, elem.position.y);
-                draw.line()
-                    .start(pt2(start.x, start.y))
-                    .end(pt2(end.x, end.y))
-                    .weight(0.15)
-                    .color(col);
-                draw.ellipse()
-                    .x_y(start.x, start.y)
-                    .radius(0.12)
-                    .color(WHITE);
-                draw.ellipse()
-                    .x_y(end.x, end.y)
-                    .radius(0.12)
-                    .color(WHITE);
-                for i in 0..*segments {
-                    let t = i as f32 / *segments as f32;
-                    let x = start.x + t * (end.x - start.x);
-                    draw.line()
-                        .start(pt2(x, start.y - 0.15))
-                        .end(pt2(x, start.y + 0.15))
-                        .weight(0.04)
-                        .color(rgba(1.0, 1.0, 1.0, 0.4));
-                }
-            }
-            ElementKind::Target {
-                width,
-                height,
-                score,
-            } => {
-                draw.rect()
-                    .x_y(elem.position.x, elem.position.y)
-                    .w_h(*width, *height)
-                    .rotate(elem.rotation)
-                    .color(col)
-                    .stroke(WHITE)
-                    .stroke_weight(0.03);
-                draw.text(&score.to_string())
-                    .x_y(elem.position.x, elem.position.y)
-                    .color(WHITE)
-                    .font_size(10);
-            }
-            ElementKind::Drain { width } => {
-                draw.rect()
-                    .x_y(elem.position.x, elem.position.y)
-                    .w_h(*width, 0.3)
-                    .color(rgba(0.8, 0.1, 0.1, 0.5))
-                    .stroke(RED)
-                    .stroke_weight(0.05);
+            ElementKind::Target { score, .. } => {
+                draw_world_label(
+                    draw,
+                    &model.settings,
+                    elem.position + Vec2::new(0.0, -0.45),
+                    &score.to_string(),
+                    13.0,
+                    rgba(1.0, 1.0, 1.0, 0.9),
+                );
             }
             ElementKind::BallSpawn => {
-                draw.ellipse()
-                    .x_y(elem.position.x, elem.position.y)
-                    .radius(BALL_RADIUS)
-                    .color(rgba(1.0, 1.0, 1.0, 0.5))
-                    .stroke(WHITE)
-                    .stroke_weight(0.03);
-                draw.text("S")
-                    .x_y(elem.position.x, elem.position.y)
-                    .color(WHITE)
-                    .font_size(10);
+                draw_world_label(
+                    draw,
+                    &model.settings,
+                    elem.position + Vec2::new(0.0, -0.45),
+                    "S",
+                    13.0,
+                    rgba(1.0, 1.0, 1.0, 0.9),
+                );
             }
+            _ => {}
         }
 
         if Some(elem.id) == model.editor.selected_id {
@@ -1832,7 +2148,142 @@ fn draw_editor_elements(model: &Model, draw: &nannou::Draw) {
                         .stroke_weight(0.05);
                 }
             }
+
+            // Show the flipper's flip range (rest -> up target) so the user can
+            // see what rotation will cause during play.
+            if let ElementKind::Flipper { side, length } = &elem.kind {
+                let offset_x = match side {
+                    FlipperSide::Left => length * 0.45,
+                    FlipperSide::Right => -length * 0.45,
+                };
+                let up_angle = match side {
+                    FlipperSide::Left => elem.rotation + FLIPPER_UP_DELTA,
+                    FlipperSide::Right => elem.rotation - FLIPPER_UP_DELTA,
+                };
+                let rest_tip = elem.position + rotate_vec(Vec2::new(offset_x, 0.0), elem.rotation);
+                let up_tip = elem.position + rotate_vec(Vec2::new(offset_x, 0.0), up_angle);
+                draw.line()
+                    .start(pt2(elem.position.x, elem.position.y))
+                    .end(pt2(rest_tip.x, rest_tip.y))
+                    .weight(0.02)
+                    .color(rgba(0.6, 0.9, 0.6, 0.6));
+                draw.line()
+                    .start(pt2(elem.position.x, elem.position.y))
+                    .end(pt2(up_tip.x, up_tip.y))
+                    .weight(0.02)
+                    .color(rgba(0.9, 0.6, 0.6, 0.6));
+            }
+
+            // Rotation gizmo: axis line + draggable handle + live angle readout.
+            let handle = rotation_handle_pos(elem);
+            draw.line()
+                .start(pt2(elem.position.x, elem.position.y))
+                .end(pt2(handle.x, handle.y))
+                .weight(0.04)
+                .color(rgba(1.0, 1.0, 0.0, 0.8));
+            draw.ellipse()
+                .x_y(handle.x, handle.y)
+                .radius(0.17)
+                .color(rgba(1.0, 1.0, 0.0, 0.9))
+                .stroke(rgba(1.0, 1.0, 1.0, 0.9))
+                .stroke_weight(0.03);
+            draw.ellipse()
+                .x_y(handle.x, handle.y)
+                .radius(0.06)
+                .color(rgba(0.0, 0.0, 0.0, 0.6));
+            let deg = elem.rotation.to_degrees();
+            draw_world_label(
+                draw,
+                &model.settings,
+                handle + Vec2::new(0.0, 0.35),
+                &format!("{:.0}°", deg),
+                13.0,
+                rgba(1.0, 1.0, 0.2, 0.95),
+            );
         }
     }
 }
 
+fn draw_placement_preview(model: &Model, draw: &nannou::Draw) {
+    if model.editor.tool == EditTool::Select || model.editor.tool == EditTool::Delete {
+        return;
+    }
+
+    let pos = snap_to_grid(&model.settings, model.mouse_world);
+
+    let kind = match model.editor.tool {
+        EditTool::Wall => ElementKind::Wall {
+            width: model.editor.wall_width,
+            height: model.editor.wall_height,
+        },
+        EditTool::Bumper => ElementKind::Bumper {
+            radius: model.editor.bumper_radius,
+            boost: model.editor.bumper_boost,
+            score: model.editor.bumper_score,
+        },
+        EditTool::FlipperLeft => ElementKind::Flipper {
+            side: FlipperSide::Left,
+            length: FLIPPER_LENGTH,
+        },
+        EditTool::FlipperRight => ElementKind::Flipper {
+            side: FlipperSide::Right,
+            length: FLIPPER_LENGTH,
+        },
+        EditTool::Chain => ElementKind::Chain {
+            link_count: model.editor.chain_links,
+            total_length: model.editor.chain_length,
+            end_mass: model.editor.chain_end_mass,
+        },
+        EditTool::FluidPool => ElementKind::FluidPool {
+            radius: model.editor.fluid_radius,
+            fluid: model.editor.fluid_type,
+            viscosity: model.editor.fluid_viscosity,
+        },
+        EditTool::SoftBridge => ElementKind::SoftBridge {
+            end_x: pos.x + 4.0,
+            segments: model.editor.bridge_segments,
+            softness: model.editor.bridge_softness,
+        },
+        EditTool::Target => ElementKind::Target {
+            width: model.editor.target_width,
+            height: model.editor.target_height,
+            score: model.editor.target_score,
+        },
+        EditTool::Drain => ElementKind::Drain {
+            width: model.editor.drain_width,
+        },
+        EditTool::BallSpawn => ElementKind::BallSpawn,
+        _ => return,
+    };
+
+    let rotation = match model.editor.tool {
+        EditTool::FlipperLeft => -0.45,
+        EditTool::FlipperRight => 0.45,
+        _ => 0.0,
+    };
+
+    let ghost = BoardElement {
+        id: usize::MAX,
+        position: pos,
+        rotation,
+        kind,
+        color: [0.5, 0.9, 1.0],
+    };
+    draw_element_shape(&ghost, draw, 0.35);
+
+    let extent = element_extent(&ghost);
+    draw.rect()
+        .x_y(pos.x, pos.y)
+        .w_h((extent + 0.5) * 2.0, (extent + 0.5) * 2.0)
+        .no_fill()
+        .stroke(rgba(0.6, 0.9, 1.0, 0.4))
+        .stroke_weight(0.02);
+    draw_world_label(
+        draw,
+        &model.settings,
+        pos + Vec2::new(0.0, extent + 0.7),
+        &format!("({:.2}, {:.2})", pos.x, pos.y),
+        13.0,
+        rgba(0.7, 0.95, 1.0, 0.95),
+    );
+}

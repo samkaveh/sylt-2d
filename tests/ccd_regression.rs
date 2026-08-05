@@ -22,13 +22,7 @@ fn pos(world: &World, id: usize) -> Vec2 {
 
 /// Signed distance between a circle and a (possibly rotated) box.
 /// Positive = separated, negative = penetrating.
-fn sep_circle_box(
-    circle_pos: Vec2,
-    circle_r: f32,
-    box_pos: Vec2,
-    box_rot: f32,
-    half: Vec2,
-) -> f32 {
+fn sep_circle_box(circle_pos: Vec2, circle_r: f32, box_pos: Vec2, box_rot: f32, half: Vec2) -> f32 {
     let rot_t = Mat2x2::new_from_angle(-box_rot);
     let local = rot_t * (circle_pos - box_pos);
     let abs = local.abs();
@@ -69,12 +63,7 @@ struct Outcome {
 }
 
 /// Step `frames` times, tracking ball-obstacle separation each frame.
-fn run_outcome(
-    world: &mut World,
-    ball_id: usize,
-    obstacle_id: usize,
-    frames: usize,
-) -> Outcome {
+fn run_outcome(world: &mut World, ball_id: usize, obstacle_id: usize, frames: usize) -> Outcome {
     let mut min_sep = f32::MAX;
     let mut min_sep_frame = 0;
     let mut samples = Vec::with_capacity(frames);
@@ -99,11 +88,17 @@ fn run_outcome(
 }
 
 fn print_trace(o: &Outcome) {
-    println!("  ball_final=({:.3},{:.3}) obstacle_final=({:.3},{:.3})", o.ball_final.x, o.ball_final.y, o.obstacle_final.x, o.obstacle_final.y);
+    println!(
+        "  ball_final=({:.3},{:.3}) obstacle_final=({:.3},{:.3})",
+        o.ball_final.x, o.ball_final.y, o.obstacle_final.x, o.obstacle_final.y
+    );
     println!("  min_sep={:.4} at frame {}", o.min_sep, o.min_sep_frame);
     for (f, b, ob, sep) in &o.samples {
         if f % 3 == 0 || *sep < -0.1 {
-            println!("  f{:>3} ball=({:7.3},{:7.3}) ob=({:7.3},{:7.3}) sep={:8.4}", f, b.x, b.y, ob.x, ob.y, sep);
+            println!(
+                "  f{:>3} ball=({:7.3},{:7.3}) ob=({:7.3},{:7.3}) sep={:8.4}",
+                f, b.x, b.y, ob.x, ob.y, sep
+            );
         }
     }
 }

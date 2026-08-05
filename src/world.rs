@@ -77,7 +77,7 @@ impl World {
             sap_endpoints: Vec::new(),
             sap_aabbs: Vec::new(),
             ccd_enabled: true,
-            ccd_speed_threshold: 12.0,
+            ccd_speed_threshold: 6.0,
             #[cfg(feature = "log")]
             logger: None,
         }
@@ -107,6 +107,15 @@ impl World {
 
     pub fn set_ccd_enabled(&mut self, enabled: bool) {
         self.ccd_enabled = enabled;
+    }
+
+    /// True if two bodies (by id) are linked by a joint and must not collide.
+    fn pair_is_jointed(&self, a: usize, b: usize) -> bool {
+        self.joints.iter().any(|j| {
+            let id1 = j.body_1.borrow().id;
+            let id2 = j.body_2.borrow().id;
+            (id1 == a && id2 == b) || (id1 == b && id2 == a)
+        })
     }
 
     pub fn set_ccd_speed_threshold(&mut self, threshold: f32) {
@@ -147,7 +156,8 @@ impl World {
         self.sap_aabbs.clear();
         self.sap_aabbs.reserve(n);
         for body in &self.bodies {
-            self.sap_aabbs.push(body.borrow().get_aabb().expand(Self::AABB_MARGIN));
+            self.sap_aabbs
+                .push(body.borrow().get_aabb().expand(Self::AABB_MARGIN));
         }
 
         self.sap_endpoints.clear();
@@ -212,9 +222,18 @@ impl World {
                     continue;
                 }
             }
+            // Bodies linked by a joint (e.g. a flipper and its fixed pivot
+            // anchor) must never collide with each other. Their anchors overlap
+            // by construction, and letting the contact solver push them apart
+            // applies a bogus torque that makes the flipper creep/drift.
+            let id_i = body_i.borrow().id;
+            let id_j = body_j.borrow().id;
+            if self.pair_is_jointed(id_i, id_j) {
+                continue;
+            }
 
-            let new_arbiter = Arbiter::new(body_i.clone(), body_j.clone());
             let key = ArbiterKey::new(&body_i.borrow(), &body_j.borrow());
+            let new_arbiter = Arbiter::new(body_i.clone(), body_j.clone());
 
             if new_arbiter.num_contacts > 0 {
                 match self.arbiters.entry(key) {
@@ -383,7 +402,13 @@ impl World {
         for i in 0..n {
             let i_is_fast = {
                 let bi = self.bodies[i].borrow();
-                bi.inv_mass != 0.0 && bi.velocity.length() >= self.ccd_speed_threshold
+                // A body counts as a CCD bullet if the speed of its *fastest
+                // surface point* exceeds the threshold. Rotation matters: a
+                // flipper pivoting in place has ~zero linear velocity but its
+                // tip sweeps an arc that can outrun a frame.
+                let lin_speed = bi.velocity.length();
+                let spin_speed = bi.angular_velocity.abs() * bi.max_edge_speed_radius();
+                bi.inv_mass != 0.0 && lin_speed + spin_speed >= self.ccd_speed_threshold
             };
             if !i_is_fast {
                 continue;
@@ -391,6 +416,9 @@ impl World {
 
             for j in 0..n {
                 if j == i {
+                    continue;
+                }
+                if self.pair_is_jointed(self.bodies[i].borrow().id, self.bodies[j].borrow().id) {
                     continue;
                 }
 
@@ -403,9 +431,7 @@ impl World {
                     let t_clamped = impact.t.clamp(0.0, 1.0);
                     match &best {
                         None => best = Some(impact),
-                        Some(ref cur) if t_clamped < cur.t => {
-                            best = Some(impact)
-                        }
+                        Some(ref cur) if t_clamped < cur.t => best = Some(impact),
                         _ => {}
                     }
                 }

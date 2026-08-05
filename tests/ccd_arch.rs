@@ -66,7 +66,11 @@ fn point_poly_dist(p: Vec2, body: &Body) -> f32 {
         let t = ((p - a).dot(e) / e_len).clamp(0.0, 1.0);
         min_dist = min_dist.min((p - (a + e * t)).length());
     }
-    if inside { -min_dist } else { min_dist }
+    if inside {
+        -min_dist
+    } else {
+        min_dist
+    }
 }
 
 /// Minimum signed separation between the ball and every arch segment.
@@ -88,11 +92,7 @@ struct Outcome {
 
 /// Steps a ball against the arch for `frames` steps, tracking the minimum
 /// separation from the arch material.
-fn run_arch_ball(
-    start: Vec2,
-    vel: Vec2,
-    frames: usize,
-) -> (Outcome, World) {
+fn run_arch_ball(start: Vec2, vel: Vec2, frames: usize) -> (Outcome, World) {
     let (mut world, ids) = arch_world();
     let mut ball = Body::new_circle(BALL_RADIUS, 1.5);
     ball.position = start;

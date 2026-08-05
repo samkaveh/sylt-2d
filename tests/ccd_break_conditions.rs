@@ -52,12 +52,15 @@ fn ccd_arc_near_end_of_step_impact() {
     world.set_ccd_enabled(true);
 
     // Small polygon segment representing part of the arc.
-    let arc_seg = Body::new_polygon(vec![
-        Vec2::new(0.0, 0.0),
-        Vec2::new(2.0, 0.0),
-        Vec2::new(2.0, 0.5),
-        Vec2::new(0.0, 0.5),
-    ], f32::MAX);
+    let arc_seg = Body::new_polygon(
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(2.0, 0.0),
+            Vec2::new(2.0, 0.5),
+            Vec2::new(0.0, 0.5),
+        ],
+        f32::MAX,
+    );
     world.add_body(arc_seg);
 
     let mut ball = Body::new_circle(0.35, 1.0);

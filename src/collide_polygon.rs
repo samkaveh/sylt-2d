@@ -184,6 +184,7 @@ fn find_contact_points(c0: &ConvexPolygon, c1: &ConvexPolygon) -> Vec<Contact> {
             normal: *normal,
             separation: separation * 0.001,
             feature,
+            restitution: 1.0,
             ..Default::default()
         };
 

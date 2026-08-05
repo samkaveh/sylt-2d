@@ -147,7 +147,21 @@ fn ray_face(
 /// the circle radius and a disc of the circle radius at each vertex. The
 /// earliest impact wins. Body velocities are assumed constant; relative motion
 /// is used for the sweep.
+///
+/// If the polygon is also rotating (angular velocity), the whole frame is
+/// sampled time-wise and bisected for the first feel of contact, because a
+/// rotating-edge sweep (like a flipper) would otherwise tunnel its thinner face
+/// through the circle.
 pub fn sweep_circle_polygon(circle: &Body, poly_body: &Body, dt: f32) -> Option<Impact> {
+    let w = poly_body.angular_velocity;
+    if w.abs() < 1e-4 {
+        return sweep_circle_polygon_linear(circle, poly_body, dt);
+    }
+    sweep_circle_polygon_rotating(circle, poly_body, w, dt)
+}
+
+/// Exact analytic, translation-only sweep used when the polygon is not rotating.
+fn sweep_circle_polygon_linear(circle: &Body, poly_body: &Body, dt: f32) -> Option<Impact> {
     let r = circle.radius;
     let poly = poly_body
         .get_polygon()
@@ -162,12 +176,22 @@ pub fn sweep_circle_polygon(circle: &Body, poly_body: &Body, dt: f32) -> Option<
     let delta = (circle.velocity - poly_body.velocity) * dt;
 
     let mut best: Option<Impact> = None;
-    let mut consider = |t: f32, position: Vec2, normal: Vec2| {
-        match &best {
-            None => best = Some(Impact { t, position, normal }),
-            Some(cur) if t < cur.t => best = Some(Impact { t, position, normal }),
-            _ => {}
+    let mut consider = |t: f32, position: Vec2, normal: Vec2| match &best {
+        None => {
+            best = Some(Impact {
+                t,
+                position,
+                normal,
+            })
         }
+        Some(cur) if t < cur.t => {
+            best = Some(Impact {
+                t,
+                position,
+                normal,
+            })
+        }
+        _ => {}
     };
 
     // Vertex discs: ray vs a disc of the circle radius at each polygon vertex.
@@ -188,13 +212,112 @@ pub fn sweep_circle_polygon(circle: &Body, poly_body: &Body, dt: f32) -> Option<
             continue;
         }
         let nrm = Vec2::new(edge.y, -edge.x) * (1.0 / len);
-        if let Some((t, hit, _)) = ray_face(origin, delta, a + nrm * r, nrm, edge, edge.dot(edge))
-        {
+        if let Some((t, hit, _)) = ray_face(origin, delta, a + nrm * r, nrm, edge, edge.dot(edge)) {
             consider(t, hit, nrm);
         }
     }
 
     best
+}
+
+/// Time-sampled sweep of a circle against a translating *and rotating* polygon.
+/// The polygon's vertices are advanced by both its linear velocity and its
+/// angular velocity, and the signed distance (nearest edge) of the circle center
+/// is evaluated over the frame. The earliest sign-change into penetration is
+/// located by binary search.
+fn sweep_circle_polygon_rotating(
+    circle: &Body,
+    poly_body: &Body,
+    w: f32,
+    dt: f32,
+) -> Option<Impact> {
+    let r = circle.radius;
+    let local_verts = poly_body.get_polygon().get_vertices();
+    let nv = local_verts.len();
+    if nv < 3 {
+        return None;
+    }
+
+    let rot0 = poly_body.rotation;
+    let c0 = circle.position;
+    let cv = circle.velocity;
+    let pp0 = poly_body.position;
+    let pv = poly_body.velocity;
+
+    // Signed penetration at normalized time tt in [0,1]: distance from the
+    // circle center to the nearest polygon edge (>= 0 outside), minus the circle
+    // radius, so <= 0 while the disc touches/penetrates. Polar.
+    let eval = |tt: f32| -> f32 {
+        let t = tt;
+        let ang = rot0 + w * t * dt;
+        let rm = Mat2x2::new_from_angle(ang);
+        let center = pp0 + pv * (t * dt);
+        let circ = c0 + cv * (t * dt);
+
+        let mut min_d = f32::MAX;
+        for i in 0..nv {
+            let a = center + rm * local_verts[i];
+            let b = center + rm * local_verts[(i + 1) % nv];
+            let ab = b - a;
+            let len_sq = ab.dot(ab);
+            let tseg = if len_sq > f32::EPSILON {
+                ((circ - a).dot(ab) / len_sq).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let proj = a + ab * tseg;
+            let d = (circ - proj).length();
+            if d < min_d {
+                min_d = d;
+            }
+        }
+        min_d - r
+    };
+
+    // Already touching/penetrating at the start of the frame.
+    if eval(0.0) <= 0.0 {
+        return Some(Impact {
+            t: 0.0,
+            position: c0,
+            normal: Vec2::new(0.0, 1.0),
+        });
+    }
+
+    // Sample to find the first sub-interval that enters penetration, then bisect.
+    let steps = 24;
+    let mut prev_t = 0.0f32;
+    let mut prev_pen = eval(0.0);
+    for s in 1..=steps {
+        let t = s as f32 / steps as f32;
+        let pen = eval(t);
+        // First crossing from outside (>0) to at-or-beyond touching (<=0).
+        if pen <= 0.0 && prev_pen > 0.0 {
+            let (mut lo, mut hi) = (prev_t, t);
+            for _ in 0..40 {
+                let mid = (lo + hi) * 0.5;
+                if eval(mid) > 0.0 {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if hi - lo < 1e-5 {
+                    break;
+                }
+            }
+            let toi = hi;
+            let t = toi.clamp(0.0, 1.0);
+            let pos = c0 + cv * (t * dt);
+            return Some(Impact {
+                t,
+                position: pos,
+                normal: Vec2::new(0.0, 1.0),
+            });
+        }
+        prev_t = t;
+        prev_pen = pen;
+    }
+
+    None
 }
 
 /// Continuous test between a moving circle and a (linearly) moving box over a
@@ -225,12 +348,7 @@ pub fn sweep_box_box(b1: &Body, b2: &Body, dt: f32) -> Option<Impact> {
     ];
 
     // Distance from a point to a box (in box's local frame). Negative if inside.
-    fn point_box_dist(
-        p_world: Vec2,
-        pos: Vec2,
-        rot: Mat2x2,
-        h: Vec2,
-    ) -> (f32, Vec2) {
+    fn point_box_dist(p_world: Vec2, pos: Vec2, rot: Mat2x2, h: Vec2) -> (f32, Vec2) {
         let rot_t = rot.transpose();
         let local = rot_t * (p_world - pos);
         let dx = local.x.abs() - h.x;
@@ -395,5 +513,25 @@ mod tests {
         let a = circle(Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), 1.0, 1.0);
         let b = circle(Vec2::new(5.0, 5.0), Vec2::new(0.0, 0.0), 1.0, f32::MAX);
         assert!(sweep_circle_circle(&a, &b, 1.0).is_none());
+    }
+
+    #[test]
+    fn sweep_circle_rotating_plank_is_detected() {
+        // A thin plank rotating about its center sweeps its tip through a
+        // stationary circle mid-frame. Both frame endpoints are clear (the
+        // plank's tip has not reached / has already passed the circle), so a
+        // translation-only sweep (and the discrete solver) would report no
+        // impact and let the edge tunnel through the circle.
+        //
+        // Plank 2.0 x 0.15 at the origin, rotating CCW at 6 rad/s over dt=1:
+        //   - at t=0  the circle is 0.475 above the plank top edge (clear)
+        //   - around t~0.09 the +x tip is ~0.18 from the circle center (hit)
+        //   - at t=1   the tip has rotated far away (clear again)
+        let mut plank = boxy(Vec2::new(0.0, 0.0), Vec2::new(2.0, 0.15), f32::MAX);
+        plank.angular_velocity = 6.0;
+        let c = circle(Vec2::new(1.0, 0.55), Vec2::new(0.0, 0.0), 0.35, 1.0);
+
+        let impact = sweep_circle_polygon(&c, &plank, 1.0).expect("rotating plank must be swept");
+        assert!(impact.t > 0.0 && impact.t < 1.0, "t={}", impact.t);
     }
 }

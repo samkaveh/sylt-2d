@@ -14,13 +14,15 @@ fn ball_bounces_with_restitution() {
     ball.velocity = Vec2::new(0.0, -5.0);
     let id = ball.id;
     world.add_body(ball);
-    let dt = 1.0/60.0;
+    let dt = 1.0 / 60.0;
     let mut max_y = -100.0f32;
     for _ in 0..100 {
         let _ = world.step(dt);
         let b = world.bodies.iter().find(|b| b.borrow().id == id).unwrap();
         let py = b.borrow().position.y;
-        if py > max_y { max_y = py; }
+        if py > max_y {
+            max_y = py;
+        }
     }
     // Should have bounced back up (reached a height above the release after first bounce).
     println!("max_y {}", max_y);
