@@ -1628,7 +1628,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
         .stroke(rgb(0.2, 0.25, 0.45))
         .stroke_weight(0.15);
 
-    if model.settings.show_grid {
+    if model.settings.show_grid && model.mode == GameMode::Editor {
         draw_grid(&draw, &model.settings);
     }
 
@@ -1668,24 +1668,63 @@ fn view(app: &App, model: &Model, frame: Frame) {
         match body.shape {
             Shape::Box => {
                 if is_plunger {
-                    // Stylized Metallic Red Plunger
+                    // Metallic Plunger with charge meter
                     let charge_pct = model.play.plunger_charge / PLUNGER_MAX_CHARGE;
                     let p_color = rgb(0.9, 0.2 + charge_pct * 0.7, 0.1);
+                    let p_stroke = rgb(1.0, 0.5 + charge_pct * 0.5, 0.3);
                     draw.rect()
                         .x_y(body.position.x, body.position.y)
                         .w_h(body.width.x, body.width.y)
                         .rotate(body.rotation)
                         .color(p_color)
-                        .stroke(rgb(1.0, 0.8, 0.8))
-                        .stroke_weight(0.04);
+                        .stroke(p_stroke)
+                        .stroke_weight(0.05);
+
+                    draw.rect()
+                        .x_y(body.position.x - body.width.x * 0.2, body.position.y)
+                        .w_h(body.width.x * 0.2, body.width.y * 0.6)
+                        .rotate(body.rotation)
+                        .color(rgba(1.0, 1.0, 1.0, 0.3));
+
+                    let meter_w = body.width.x * 0.8;
+                    let meter_h = 0.12;
+                    let meter_x = body.position.x;
+                    let meter_y = body.position.y + body.width.y * 0.5 + 0.2;
+                    draw.rect()
+                        .x_y(meter_x, meter_y)
+                        .w_h(meter_w, meter_h)
+                        .color(rgb(0.1, 0.1, 0.15))
+                        .stroke(rgba(1.0, 1.0, 1.0, 0.2))
+                        .stroke_weight(0.02);
+                    if charge_pct > 0.01 {
+                        let fill_w = meter_w * charge_pct;
+                        let fill_color = if charge_pct < 0.5 {
+                            rgb(0.2, 0.8, 0.3)
+                        } else if charge_pct < 0.8 {
+                            rgb(0.9, 0.8, 0.1)
+                        } else {
+                            rgb(0.95, 0.2, 0.1)
+                        };
+                        draw.rect()
+                            .x_y(meter_x - (meter_w - fill_w) * 0.5, meter_y)
+                            .w_h(fill_w, meter_h * 0.7)
+                            .color(fill_color);
+                    }
                 } else if is_flipper_left || is_flipper_right {
-                    // Vibrant Neon Flippers
+                    // Metallic Flipper with tapered shape
                     let f_color = if (is_flipper_left && model.play.flipper_left_active)
                         || (is_flipper_right && model.play.flipper_right_active)
                     {
-                        rgb(0.1, 0.95, 0.8) // High Neon Cyan when active
+                        rgb(0.1, 0.95, 0.85) // Bright cyan when active
                     } else {
-                        rgb(0.1, 0.75, 0.5) // Sleek Emerald Green resting
+                        rgb(0.15, 0.7, 0.5) // Emerald resting
+                    };
+                    let f_stroke = if (is_flipper_left && model.play.flipper_left_active)
+                        || (is_flipper_right && model.play.flipper_right_active)
+                    {
+                        rgb(0.6, 1.0, 0.95)
+                    } else {
+                        rgb(0.3, 0.85, 0.65)
                     };
 
                     draw.rect()
@@ -1693,8 +1732,36 @@ fn view(app: &App, model: &Model, frame: Frame) {
                         .w_h(body.width.x, body.width.y)
                         .rotate(body.rotation)
                         .color(f_color)
-                        .stroke(WHITE)
+                        .stroke(f_stroke)
                         .stroke_weight(0.04);
+
+                    let pivot_offset = if is_flipper_left {
+                        -body.width.x * 0.42
+                    } else {
+                        body.width.x * 0.42
+                    };
+                    let cos_r = body.rotation.cos();
+                    let sin_r = body.rotation.sin();
+                    let pivot_x = body.position.x + pivot_offset * cos_r;
+                    let pivot_y = body.position.y + pivot_offset * sin_r;
+                    draw.ellipse()
+                        .x_y(pivot_x, pivot_y)
+                        .w_h(0.28, 0.28)
+                        .color(rgb(0.7, 0.75, 0.8))
+                        .stroke(WHITE)
+                        .stroke_weight(0.03);
+
+                    let tip_offset = if is_flipper_left {
+                        body.width.x * 0.42
+                    } else {
+                        -body.width.x * 0.42
+                    };
+                    let tip_x = body.position.x + tip_offset * cos_r;
+                    let tip_y = body.position.y + tip_offset * sin_r;
+                    draw.ellipse()
+                        .x_y(tip_x, tip_y)
+                        .w_h(0.16, 0.16)
+                        .color(rgba(1.0, 1.0, 1.0, 0.4));
                 } else if is_chain {
                     draw.rect()
                         .x_y(body.position.x, body.position.y)
@@ -1704,12 +1771,18 @@ fn view(app: &App, model: &Model, frame: Frame) {
                         .stroke(rgb(0.9, 0.9, 1.0))
                         .stroke_weight(0.02);
                 } else if num == 0 {
-                    // Bottom Drain Floor
+                    // Bottom Drain Floor - danger zone
                     draw.rect()
                         .x_y(body.position.x, body.position.y)
                         .w_h(body.width.x, body.width.y)
                         .rotate(body.rotation)
-                        .color(rgb(0.15, 0.05, 0.08));
+                        .color(rgb(0.6, 0.08, 0.12))
+                        .stroke(rgb(0.9, 0.15, 0.2))
+                        .stroke_weight(0.04);
+                    draw.rect()
+                        .x_y(body.position.x, body.position.y + body.width.y * 0.3)
+                        .w_h(body.width.x * 0.95, body.width.y * 0.3)
+                        .color(rgba(1.0, 0.2, 0.15, 0.3));
                 } else {
                     // Cabinet & Guide Walls
                     draw.rect()
@@ -1729,68 +1802,110 @@ fn view(app: &App, model: &Model, frame: Frame) {
                     .map(Into::into)
                     .collect();
                 draw.polygon()
-                    .color(rgb(0.45, 0.35, 0.75))
+                    .color(rgb(0.18, 0.22, 0.32))
                     .x_y(body.position.x, body.position.y)
                     .rotate(body.rotation)
+                    .stroke(rgb(0.35, 0.45, 0.65))
+                    .stroke_weight(0.03)
                     .points(tuples);
             }
             Shape::Circle => {
                 if is_ball {
-                    // Chrome Metallic Pinball with Soft Glow Shadow
+                    // Chrome Metallic Pinball with Enhanced Glow
                     draw.ellipse()
                         .x_y(body.position.x, body.position.y)
-                        .w_h(body.radius * 2.6, body.radius * 2.6)
-                        .color(rgba(0.2, 0.5, 1.0, 0.25));
+                        .w_h(body.radius * 3.0, body.radius * 3.0)
+                        .color(rgba(0.2, 0.5, 1.0, 0.15));
+
+                    draw.ellipse()
+                        .x_y(body.position.x, body.position.y)
+                        .w_h(body.radius * 2.2, body.radius * 2.2)
+                        .color(rgba(0.4, 0.6, 0.9, 0.3));
 
                     draw.ellipse()
                         .x_y(body.position.x, body.position.y)
                         .w_h(body.radius * 2.0, body.radius * 2.0)
-                        .color(rgb(0.95, 0.97, 1.0));
+                        .color(rgb(0.85, 0.88, 0.95))
+                        .stroke(rgb(0.95, 0.97, 1.0))
+                        .stroke_weight(0.03);
 
-                    // Highlight spec dot
                     draw.ellipse()
                         .x_y(
-                            body.position.x + body.radius * 0.3,
-                            body.position.y + body.radius * 0.3,
+                            body.position.x + body.radius * 0.2,
+                            body.position.y + body.radius * 0.2,
                         )
-                        .w_h(body.radius * 0.6, body.radius * 0.6)
+                        .w_h(body.radius * 0.7, body.radius * 0.7)
+                        .color(rgba(1.0, 1.0, 1.0, 0.9));
+
+                    draw.ellipse()
+                        .x_y(
+                            body.position.x + body.radius * 0.35,
+                            body.position.y + body.radius * 0.35,
+                        )
+                        .w_h(body.radius * 0.3, body.radius * 0.3)
                         .color(WHITE);
+
+                    draw.ellipse()
+                        .x_y(
+                            body.position.x - body.radius * 0.2,
+                            body.position.y - body.radius * 0.15,
+                        )
+                        .w_h(body.radius * 0.25, body.radius * 0.2)
+                        .color(rgba(0.3, 0.4, 0.6, 0.5));
                 } else if model.play.metaball_bodies.contains(&body.id) {
                     draw.ellipse()
                         .x_y(body.position.x, body.position.y)
                         .w_h(body.radius * 2.0, body.radius * 2.0)
                         .color(rgba(0.2, 0.6, 0.9, 0.15));
                 } else if body.inv_mass == 0.0 {
-                    // Bumper Rendering
+                    // Bumper Rendering with enhanced glow
                     let position = body.position;
-                    let is_flashing = model
+                    let flash_timer = model
                         .play
                         .bumper_flash_timers
                         .iter()
-                        .any(|(pos, _)| (*pos - position).length() < 0.1);
+                        .find(|(pos, _)| (*pos - position).length() < 0.1)
+                        .map(|(_, t)| *t)
+                        .unwrap_or(0.0);
+                    let is_flashing = flash_timer > 0.0;
 
-                    let (b_col, ring_col) = if is_flashing {
-                        (rgb(1.0, 1.0, 0.6), rgb(1.0, 0.9, 0.3)) // Flash bright yellow
+                    let (b_col, ring_col, glow_alpha) = if is_flashing {
+                        let pulse = (flash_timer * 12.0).sin().abs();
+                        (
+                            rgb(1.0, 1.0, 0.6),
+                            rgb(1.0, 0.9, 0.3),
+                            0.35 + 0.25 * pulse,
+                        )
                     } else {
-                        (rgb(0.95, 0.35, 0.2), rgb(1.0, 0.6, 0.2))
+                        (rgb(0.95, 0.35, 0.2), rgb(1.0, 0.6, 0.2), 0.15)
                     };
 
                     draw.ellipse()
                         .x_y(position.x, position.y)
-                        .w_h(body.radius * 2.3, body.radius * 2.3)
-                        .color(rgba(b_col.red, b_col.green, b_col.blue, 0.2));
+                        .w_h(body.radius * 3.0, body.radius * 3.0)
+                        .color(rgba(b_col.red, b_col.green, b_col.blue, glow_alpha * 0.4));
+
+                    draw.ellipse()
+                        .x_y(position.x, position.y)
+                        .w_h(body.radius * 2.4, body.radius * 2.4)
+                        .color(rgba(b_col.red, b_col.green, b_col.blue, glow_alpha));
 
                     draw.ellipse()
                         .x_y(position.x, position.y)
                         .w_h(body.radius * 2.0, body.radius * 2.0)
                         .color(b_col)
-                        .stroke(WHITE)
+                        .stroke(rgba(1.0, 1.0, 1.0, 0.8))
                         .stroke_weight(0.04);
 
                     draw.ellipse()
                         .x_y(position.x, position.y)
                         .w_h(body.radius * 1.3, body.radius * 1.3)
                         .color(ring_col);
+
+                    draw.ellipse()
+                        .x_y(position.x - body.radius * 0.25, position.y + body.radius * 0.25)
+                        .w_h(body.radius * 0.5, body.radius * 0.5)
+                        .color(rgba(1.0, 1.0, 1.0, 0.5));
                 } else {
                     draw.ellipse()
                         .x_y(body.position.x, body.position.y)
