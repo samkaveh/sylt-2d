@@ -221,6 +221,12 @@ impl World {
                 if bi.inv_mass == 0.0 && bj.inv_mass == 0.0 {
                     continue;
                 }
+                // Sensor bodies (e.g. liquid particles) collide only with other
+                // sensors so they jostle each other into a liquid blob, but let
+                // the ball and the walls pass through them.
+                if bi.sensor != bj.sensor {
+                    continue;
+                }
             }
             // Bodies linked by a joint (e.g. a flipper and its fixed pivot
             // anchor) must never collide with each other. Their anchors overlap
@@ -417,6 +423,13 @@ impl World {
             for j in 0..n {
                 if j == i {
                     continue;
+                }
+                {
+                    let bi = self.bodies[i].borrow();
+                    let bj = self.bodies[j].borrow();
+                    if bi.sensor != bj.sensor {
+                        continue;
+                    }
                 }
                 if self.pair_is_jointed(self.bodies[i].borrow().id, self.bodies[j].borrow().id) {
                     continue;

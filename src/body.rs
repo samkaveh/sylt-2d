@@ -213,6 +213,10 @@ pub struct Body {
     /// ejected consistently in one direction instead of oscillating between two
     /// opposite faces of a thin body (e.g. a ball stuck on a flipper).
     pub wedge_normal: Option<Vec2>,
+    /// Sensor bodies never collide with anything (they still integrate and are
+    /// affected by joints). Useful for particles that should render and be
+    /// anchored but must let other bodies pass through (e.g. liquid blobs).
+    pub sensor: bool,
 }
 
 static BODY_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -260,8 +264,10 @@ impl Body {
             shape: Shape::Box,
             radius: 0.0,
             wedge_normal: None,
+            sensor: false,
         }
     }
+
     pub fn new_polygon(vertices: Vec<Vec2>, mass: f32) -> Self {
         let mut convex_polygon = ConvexPolygon {
             vertices: vertices.clone(),
@@ -302,6 +308,7 @@ impl Body {
             shape: Shape::ConvexPolygon,
             radius: 0.0,
             wedge_normal: None,
+            sensor: false,
         }
     }
 
@@ -341,11 +348,16 @@ impl Body {
             shape: Shape::Circle,
             radius,
             wedge_normal: None,
+            sensor: false,
         }
     }
 
     pub fn add_force(&mut self, force: Vec2) {
         self.force = self.force + force;
+    }
+
+    pub fn set_sensor(&mut self, sensor: bool) {
+        self.sensor = sensor;
     }
 
     pub fn get_polygon(&self) -> ConvexPolygon {
