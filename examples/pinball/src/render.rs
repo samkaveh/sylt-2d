@@ -403,14 +403,63 @@ pub(crate) fn view(app: &App, model: &Model, frame: Frame) {
                         .w_h(body.width.x * 0.95, body.width.y * 0.3)
                         .color(rgba(1.0, 0.2, 0.15, 0.3));
                 } else {
-                    // Cabinet & Guide Walls
+                    // Cabinet & Guide Walls - Metallic Arcade Rail Styling
+                    let w = body.width.x;
+                    let h = body.width.y;
+                    let pos = body.position;
+                    let rot = body.rotation;
+
+                    // 1. Ambient wall shadow drop
                     draw.rect()
-                        .x_y(body.position.x, body.position.y)
-                        .w_h(body.width.x, body.width.y)
-                        .rotate(body.rotation)
-                        .color(rgb(0.18, 0.22, 0.32))
-                        .stroke(rgb(0.35, 0.45, 0.65))
-                        .stroke_weight(0.03);
+                        .x_y(pos.x + 0.08, pos.y - 0.08)
+                        .w_h(w, h)
+                        .rotate(rot)
+                        .color(rgba(0.0, 0.0, 0.0, 0.45));
+
+                    // 2. Base metallic chassis body
+                    draw.rect()
+                        .x_y(pos.x, pos.y)
+                        .w_h(w, h)
+                        .rotate(rot)
+                        .color(rgb(0.14, 0.18, 0.28))
+                        .stroke(rgb(0.35, 0.50, 0.80))
+                        .stroke_weight(0.04);
+
+                    // 3. Top edge highlight bevel
+                    let cos_r = rot.cos();
+                    let sin_r = rot.sin();
+                    let top_offset_y = h * 0.38;
+                    let hx = pos.x - sin_r * top_offset_y;
+                    let hy = pos.y + cos_r * top_offset_y;
+
+                    draw.rect()
+                        .x_y(hx, hy)
+                        .w_h(w * 0.92, h * 0.22)
+                        .rotate(rot)
+                        .color(rgba(0.7, 0.85, 1.0, 0.25));
+
+                    // 4. End-cap metallic rivets for guide walls
+                    let wall_length = w.max(h);
+                    let wall_thickness = w.min(h);
+                    if wall_length < 6.0 {
+                        let rivet_size = (wall_thickness * 0.7).min(0.4);
+                        let cap_offset = wall_length * 0.45;
+                        let (dx, dy) = if w > h {
+                            (cos_r, sin_r)
+                        } else {
+                            (-sin_r, cos_r)
+                        };
+                        for dir in [-1.0, 1.0] {
+                            let cx = pos.x + dx * (cap_offset * dir);
+                            let cy = pos.y + dy * (cap_offset * dir);
+                            draw.ellipse()
+                                .x_y(cx, cy)
+                                .w_h(rivet_size, rivet_size)
+                                .color(rgb(0.35, 0.45, 0.6))
+                                .stroke(rgba(0.8, 0.9, 1.0, 0.8))
+                                .stroke_weight(0.02);
+                        }
+                    }
                 }
             }
             Shape::ConvexPolygon => {
@@ -420,12 +469,22 @@ pub(crate) fn view(app: &App, model: &Model, frame: Frame) {
                     .into_iter()
                     .map(Into::into)
                     .collect();
+                // Illuminated Top Main Arch Segment
                 draw.polygon()
-                    .color(rgb(0.18, 0.22, 0.32))
+                    .color(rgb(0.12, 0.16, 0.26))
                     .x_y(body.position.x, body.position.y)
                     .rotate(body.rotation)
-                    .stroke(rgb(0.35, 0.45, 0.65))
-                    .stroke_weight(0.03)
+                    .stroke(rgb(0.30, 0.55, 0.90))
+                    .stroke_weight(0.04)
+                    .points(tuples.clone());
+
+                // Inner neon guide stroke for top arch
+                draw.polygon()
+                    .color(rgba(0.0, 0.0, 0.0, 0.0))
+                    .x_y(body.position.x, body.position.y)
+                    .rotate(body.rotation)
+                    .stroke(rgba(0.5, 0.8, 1.0, 0.4))
+                    .stroke_weight(0.02)
                     .points(tuples);
             }
             Shape::Circle => {

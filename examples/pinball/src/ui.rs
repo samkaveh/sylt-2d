@@ -43,36 +43,106 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
         let board_name = &mut model.board_name_input;
         let ctx = model.egui.begin_frame();
 
+        // Custom arcade dark theme styling for egui
+        let mut style: egui::Style = (*ctx.style()).clone();
+        style.visuals.dark_mode = true;
+        style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(14, 16, 26);
+        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(22, 26, 42);
+        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(38, 48, 76);
+        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(0, 160, 220);
+        style.visuals.window_fill = egui::Color32::from_rgb(14, 16, 26);
+        style.visuals.selection.bg_fill = egui::Color32::from_rgb(0, 180, 240);
+        ctx.set_style(style);
+
         egui::SidePanel::left("tools")
-            .default_width(220.0)
+            .default_width(240.0)
             .show(&ctx, |ui| {
-                ui.heading("⚡ Pinball Board Editor");
+                ui.add_space(4.0);
+                ui.heading(
+                    egui::RichText::new("⚡ BOARD EDITOR")
+                        .size(18.0)
+                        .strong()
+                        .color(egui::Color32::from_rgb(0, 210, 255)),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("SYLT-2D Physics Playground")
+                        .size(11.0)
+                        .italics()
+                        .color(egui::Color32::GRAY),
+                );
                 ui.separator();
-                ui.label("Tools:");
-                ui.horizontal_wrapped(|ui| {
-                    let tools = [
-                        EditTool::Select,
-                        EditTool::Wall,
-                        EditTool::Bumper,
-                        EditTool::FlipperLeft,
-                        EditTool::FlipperRight,
-                        EditTool::Chain,
-                        EditTool::FluidPool,
-                        EditTool::SoftBridge,
-                        EditTool::Target,
-                        EditTool::Drain,
-                        EditTool::BallSpawn,
-                        EditTool::Delete,
-                    ];
-                    for t in &tools {
-                        let selected = editor.tool == *t;
-                        if ui.selectable_label(selected, t.name()).clicked() {
-                            editor.tool = *t;
+
+                ui.label(
+                    egui::RichText::new("TOOLBOX")
+                        .size(12.0)
+                        .strong()
+                        .color(egui::Color32::LIGHT_BLUE),
+                );
+
+                // Categorized tool layout
+                ui.collapsing("📦 Field Structures", |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (t, icon) in [
+                            (EditTool::Select, "🎯 Select"),
+                            (EditTool::Wall, "🧱 Wall"),
+                            (EditTool::Bumper, "💥 Bumper"),
+                            (EditTool::Target, "🎯 Target"),
+                            (EditTool::Drain, "🔻 Drain"),
+                        ] {
+                            let selected = editor.tool == t;
+                            if ui.selectable_label(selected, icon).clicked() {
+                                editor.tool = t;
+                            }
                         }
-                    }
+                    });
                 });
+
+                ui.collapsing("🕹 Controls & Flippers", |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (t, icon) in [
+                            (EditTool::FlipperLeft, "◀ Left Flip"),
+                            (EditTool::FlipperRight, "▶ Right Flip"),
+                            (EditTool::BallSpawn, "📍 Spawn"),
+                        ] {
+                            let selected = editor.tool == t;
+                            if ui.selectable_label(selected, icon).clicked() {
+                                editor.tool = t;
+                            }
+                        }
+                    });
+                });
+
+                ui.collapsing("💧 Deformables & Liquids", |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (t, icon) in [
+                            (EditTool::FluidPool, "🌊 Fluid Pool"),
+                            (EditTool::Chain, "🔗 Chain"),
+                            (EditTool::SoftBridge, "🌉 Soft Bridge"),
+                        ] {
+                            let selected = editor.tool == t;
+                            if ui.selectable_label(selected, icon).clicked() {
+                                editor.tool = t;
+                            }
+                        }
+                    });
+                });
+
+                if ui
+                    .selectable_label(editor.tool == EditTool::Delete, "🗑 Delete Tool")
+                    .clicked()
+                {
+                    editor.tool = EditTool::Delete;
+                }
+
                 ui.separator();
-                ui.label("Element Properties:");
+                ui.label(
+                    egui::RichText::new("PROPERTIES")
+                        .size(12.0)
+                        .strong()
+                        .color(egui::Color32::GOLD),
+                );
+
                 match editor.tool {
                     EditTool::Wall => {
                         ui.add(egui::Slider::new(&mut editor.wall_width, 0.5..=10.0).text("Width"));
@@ -85,16 +155,21 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                             egui::Slider::new(&mut editor.bumper_radius, 0.3..=2.0).text("Radius"),
                         );
                         ui.add(
-                            egui::Slider::new(&mut editor.bumper_boost, 3.0..=35.0).text("Boost"),
+                            egui::Slider::new(&mut editor.bumper_boost, 3.0..=35.0)
+                                .text("Boost Impulse"),
                         );
                         ui.add(
-                            egui::Slider::new(&mut editor.bumper_score, 50..=1000).text("Score"),
+                            egui::Slider::new(&mut editor.bumper_score, 50..=1000)
+                                .text("Score Value"),
                         );
                     }
                     EditTool::Chain => {
-                        ui.add(egui::Slider::new(&mut editor.chain_links, 2..=20).text("Links"));
                         ui.add(
-                            egui::Slider::new(&mut editor.chain_length, 1.0..=10.0).text("Length"),
+                            egui::Slider::new(&mut editor.chain_links, 2..=20).text("Link Count"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut editor.chain_length, 1.0..=10.0)
+                                .text("Chain Length"),
                         );
                         ui.add(
                             egui::Slider::new(&mut editor.chain_end_mass, 5.0..=50.0)
@@ -103,23 +178,22 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                     }
                     EditTool::FluidPool => {
                         ui.add(
-                            egui::Slider::new(&mut editor.fluid_radius, 0.5..=5.0).text("Radius"),
+                            egui::Slider::new(&mut editor.fluid_radius, 0.5..=5.0)
+                                .text("Pool Radius"),
                         );
                         ui.add(
                             egui::Slider::new(&mut editor.fluid_viscosity, 0.1..=3.0)
                                 .text("Viscosity"),
                         );
+                        ui.label("Fluid Type:");
                         ui.horizontal(|ui| {
-                            for ft in [
-                                FluidType::Water,
-                                FluidType::Slime,
-                                FluidType::Lava,
-                                FluidType::Acid,
+                            for (ft, name) in [
+                                (FluidType::Water, "💧 Water"),
+                                (FluidType::Slime, "🟢 Slime"),
+                                (FluidType::Lava, "🔥 Lava"),
+                                (FluidType::Acid, "🧪 Acid"),
                             ] {
-                                if ui
-                                    .selectable_label(editor.fluid_type == ft, ft.name())
-                                    .clicked()
-                                {
+                                if ui.selectable_label(editor.fluid_type == ft, name).clicked() {
                                     editor.fluid_type = ft;
                                 }
                             }
@@ -151,61 +225,86 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                         );
                     }
                     _ => {
-                        ui.label("Click on board to place element.");
+                        ui.label(
+                            egui::RichText::new("Click on playfield to place selected tool.")
+                                .italics()
+                                .size(11.0),
+                        );
                     }
                 }
+
                 if let Some(sel_id) = editor.selected_id {
                     ui.separator();
-                    ui.label(format!("Selected: #{}", sel_id));
+                    ui.label(
+                        egui::RichText::new(format!("SELECTED ELEMENT: #{}", sel_id))
+                            .strong()
+                            .color(egui::Color32::YELLOW),
+                    );
                     if let Some(elem) = model.elements.iter_mut().find(|e| e.id == sel_id) {
                         ui.add(
                             egui::Slider::new(
                                 &mut elem.rotation,
                                 -std::f32::consts::PI..=std::f32::consts::PI,
                             )
-                            .text("Rotation"),
+                            .text("Angle (rad)"),
                         );
                     }
-                    ui.label("Tip: drag the yellow handle on the");
-                    ui.label("board to rotate the element.");
-                    if ui.button("Delete Selected").clicked() {
+                    if ui.button("🗑 Delete Selected").clicked() {
                         actions.delete_selected = Some(sel_id);
                     }
                 }
+
                 ui.separator();
-                ui.label("Board Management:");
+                ui.label(
+                    egui::RichText::new("BOARD FILE MANAGEMENT")
+                        .size(12.0)
+                        .strong()
+                        .color(egui::Color32::LIGHT_GREEN),
+                );
                 ui.horizontal(|ui| {
                     ui.label("Name:");
                     ui.text_edit_singleline(board_name);
                 });
-                if ui.button("Save Board").clicked() {
-                    actions.do_save = true;
-                }
-                if ui.button("Load Board").clicked() {
-                    actions.do_load = true;
-                }
-                if ui.button("Clear All").clicked() {
-                    actions.do_clear = true;
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("💾 Save").clicked() {
+                        actions.do_save = true;
+                    }
+                    if ui.button("📂 Load").clicked() {
+                        actions.do_load = true;
+                    }
+                    if ui.button("❌ Clear").clicked() {
+                        actions.do_clear = true;
+                    }
+                });
+
                 ui.separator();
-                ui.label("View:");
+                ui.label(
+                    egui::RichText::new("VIEW & GRID")
+                        .size(12.0)
+                        .strong()
+                        .color(egui::Color32::LIGHT_BLUE),
+                );
                 ui.checkbox(&mut settings.show_grid, "Show Grid");
                 ui.checkbox(&mut settings.snap_to_grid, "Snap to Grid");
                 if settings.snap_to_grid {
-                    ui.add(egui::Slider::new(&mut settings.grid_size, 0.1..=1.0).text("Grid Size"));
+                    ui.add(
+                        egui::Slider::new(&mut settings.grid_size, 0.1..=1.0).text("Grid Spacing"),
+                    );
                 }
-                ui.checkbox(&mut settings.show_contacts, "Show Contacts");
-                ui.add(egui::Slider::new(&mut settings.scale, 10.0..=50.0).text("Zoom"));
-                ui.horizontal(|ui| {
-                    ui.label("X:");
-                    ui.add(egui::Slider::new(&mut settings.cam_x, -20.0..=20.0));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Y:");
-                    ui.add(egui::Slider::new(&mut settings.cam_y, -5.0..=25.0));
-                });
+                ui.checkbox(&mut settings.show_contacts, "Show Contact Points");
+                ui.add(egui::Slider::new(&mut settings.scale, 10.0..=50.0).text("Zoom Scale"));
+
                 ui.separator();
-                if ui.button("▶ Play Test  [TAB]").clicked() {
+                ui.add_space(4.0);
+                if ui
+                    .button(
+                        egui::RichText::new("▶ PLAY TEST  [TAB]")
+                            .size(14.0)
+                            .strong()
+                            .color(egui::Color32::GREEN),
+                    )
+                    .clicked()
+                {
                     actions.switch_to_play = true;
                 }
             });
@@ -220,73 +319,128 @@ pub(crate) fn draw_play_panel(model: &mut Model) -> PlayPanelActions {
         let play = &model.play;
         let ctx = model.egui.begin_frame();
 
+        // Custom dark theme styling
+        let mut style: egui::Style = (*ctx.style()).clone();
+        style.visuals.dark_mode = true;
+        style.visuals.window_fill = egui::Color32::from_rgb(14, 16, 26);
+        ctx.set_style(style);
+
         egui::SidePanel::right("play_hud")
-            .default_width(160.0)
+            .default_width(175.0)
             .show(&ctx, |ui| {
-                ui.heading("🎰 PINBALL");
+                ui.add_space(4.0);
+                ui.heading(
+                    egui::RichText::new("🎰 PINBALL HUD")
+                        .size(16.0)
+                        .strong()
+                        .color(egui::Color32::GOLD),
+                );
                 ui.separator();
+
                 egui::Frame::default()
-                    .fill(egui::Color32::from_rgb(20, 22, 30))
-                    .inner_margin(6.0)
+                    .fill(egui::Color32::from_rgb(20, 24, 38))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 180, 240)))
+                    .rounding(6.0)
+                    .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.label(
-                            egui::RichText::new(format!("SCORE\n{}", play.score))
-                                .size(22.0)
+                            egui::RichText::new("SCORE")
+                                .size(11.0)
+                                .color(egui::Color32::LIGHT_BLUE),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{}", play.score))
+                                .size(24.0)
                                 .strong()
                                 .color(egui::Color32::YELLOW),
                         );
                     });
+
                 if play.combo_multiplier > 1 {
+                    ui.add_space(2.0);
                     ui.label(
-                        egui::RichText::new(format!("COMBO x{}", play.combo_multiplier))
-                            .color(egui::Color32::from_rgb(255, 140, 0))
+                        egui::RichText::new(format!("🔥 COMBO x{}", play.combo_multiplier))
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(255, 130, 0))
                             .strong(),
                     );
                 }
-                ui.label(format!("HIGH SCORE: {}", play.high_score));
+
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(format!("HIGH SCORE: {}", play.high_score))
+                        .size(11.0)
+                        .color(egui::Color32::GRAY),
+                );
                 ui.separator();
-                // Ball counter as icons
-                ui.label("BALLS:");
+
+                ui.label(
+                    egui::RichText::new("BALLS REMAINING")
+                        .size(11.0)
+                        .strong()
+                        .color(egui::Color32::LIGHT_BLUE),
+                );
                 ui.horizontal(|ui| {
                     for i in 0..3 {
                         let filled = (i as u32) < play.balls_remaining;
-                        let icon = if filled { "●" } else { "○" };
-                        ui.label(egui::RichText::new(icon).size(18.0).color(if filled {
-                            egui::Color32::LIGHT_BLUE
-                        } else {
-                            egui::Color32::DARK_GRAY
-                        }));
+                        let icon = if filled { "⚪" } else { "⚫" };
+                        ui.label(egui::RichText::new(icon).size(16.0));
                     }
                 });
+
                 if play.ball_save_timer > 0.0 {
                     ui.label(
-                        egui::RichText::new("BALL SAVE ACTIVE")
-                            .size(12.0)
-                            .color(egui::Color32::LIGHT_GREEN),
+                        egui::RichText::new("🛡 BALL SAVE ACTIVE")
+                            .size(11.0)
+                            .strong()
+                            .color(egui::Color32::GREEN),
                     );
                 }
+
                 ui.separator();
-                egui::CollapsingHeader::new("Controls")
-                    .default_open(false)
+                egui::CollapsingHeader::new("🕹 Controls")
+                    .default_open(true)
                     .show(ui, |ui| {
                         ui.label("Left Flipper:  A / ←");
                         ui.label("Right Flipper: D / →");
                         ui.label("Plunger:       SPACE");
                         ui.label("Reset:         R");
                     });
-                ui.separator();
+
                 if play.game_over {
+                    ui.separator();
                     ui.colored_label(egui::Color32::RED, "💥 GAME OVER 💥");
-                    if ui.button("🔄 Restart").clicked() {
+                    if ui
+                        .button(
+                            egui::RichText::new("🔄 Restart")
+                                .strong()
+                                .color(egui::Color32::YELLOW),
+                        )
+                        .clicked()
+                    {
                         actions.do_restart = true;
                     }
                 }
+
                 ui.separator();
-                ui.label("View:");
+                ui.label(
+                    egui::RichText::new("VIEW OPTIONS")
+                        .size(11.0)
+                        .strong()
+                        .color(egui::Color32::LIGHT_BLUE),
+                );
                 ui.add(egui::Slider::new(&mut settings.scale, 10.0..=50.0).text("Zoom"));
                 ui.checkbox(&mut settings.show_contacts, "Show Contacts");
                 ui.separator();
-                if ui.button("✏ Edit  [TAB]").clicked() {
+                ui.add_space(4.0);
+                if ui
+                    .button(
+                        egui::RichText::new("✏ EDIT BOARD [TAB]")
+                            .strong()
+                            .color(egui::Color32::LIGHT_BLUE),
+                    )
+                    .clicked()
+                {
                     actions.switch_to_edit = true;
                 }
             });

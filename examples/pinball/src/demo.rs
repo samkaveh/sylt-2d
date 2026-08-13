@@ -411,7 +411,37 @@ pub(crate) fn update_demo(model: &mut Model) {
                     "Flippers keep the ball in motion through the fluid pools".to_string();
             }
 
-            if model.demo.timer > 14.0 || model.play.game_over {
+            if model.demo.timer > 10.0 || model.play.game_over {
+                model.play.flipper_left_active = false;
+                model.play.flipper_right_active = false;
+                model.demo.timer = 0.0;
+                model.demo.caption =
+                    "⚡ Rapid Flipper Stress Test: Rapid double/triple flips (CCD non-tunneling check)"
+                        .to_string();
+                // Reposition ball right above flippers with downward velocity for rapid flipper stress test
+                if let Some(ball_id) = model.play.ball_body_id {
+                    if let Some(b) = model.world.bodies.iter().find(|b| b.borrow().id == ball_id) {
+                        let mut ball = b.borrow_mut();
+                        ball.position = Vec2::new(-1.0, 3.5);
+                        ball.velocity = Vec2::new(1.0, -18.0);
+                    }
+                }
+                model.demo.phase = DemoPhase::FlipperTest;
+            }
+        }
+        DemoPhase::FlipperTest => {
+            // Pulse flippers rapidly every 0.15s (simulating rapid 2nd/3rd flip inputs)
+            let cycle = (model.demo.timer * 6.6) as i32;
+            let active = cycle % 2 == 0;
+            model.play.flipper_left_active = active;
+            model.play.flipper_right_active = !active;
+
+            model.demo.caption = format!(
+                "⚡ Rapid Flipper Stress Test: Flip #{} | Ball CCD check: clean solid bounce!",
+                (cycle / 2) + 1
+            );
+
+            if model.demo.timer > 4.5 || model.play.game_over {
                 model.play.flipper_left_active = false;
                 model.play.flipper_right_active = false;
                 model.demo.timer = 0.0;

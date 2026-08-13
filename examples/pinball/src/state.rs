@@ -7,7 +7,7 @@ use sylt_2d::world::World;
 pub(crate) const ITERATIONS: u32 = 120;
 pub(crate) const BALL_RADIUS: f32 = 0.35;
 pub(crate) const FLIPPER_LENGTH: f32 = 2.2;
-pub(crate) const FLIPPER_WIDTH: f32 = 0.45;
+pub(crate) const FLIPPER_WIDTH: f32 = 0.55;
 pub(crate) const FLIPPER_UP_DELTA: f32 = 0.9;
 pub(crate) const PLUNGER_MAX_CHARGE: f32 = 55.0;
 pub(crate) const GRID_SNAP: f32 = 0.25;
@@ -62,6 +62,7 @@ pub(crate) enum FluidType {
 }
 
 impl FluidType {
+    #[allow(dead_code)]
     pub(crate) fn name(&self) -> &str {
         match self {
             FluidType::Water => "Water",
@@ -225,6 +226,7 @@ pub(crate) enum DemoPhase {
     ChargePlunger,
     LaunchBall,
     BallInPlay,
+    FlipperTest,
     WatchBall,
     EditorTools,
     Done,

@@ -40,9 +40,12 @@ fn model(app: &App) -> Model {
     let window = app.window(_window).unwrap();
     let egui = Egui::from_window(&window);
     let mut world = World::new(Vec2::new(0.0, -15.0), state::ITERATIONS);
+    // Enable Continuous Collision Detection to prevent fast-moving balls or high-speed
+    // flipper sweeps from tunneling through flippers or walls across frames.
+    world.set_ccd_enabled(true);
+    world.set_ccd_speed_threshold(3.0);
     // Give the ball a solid bounce off walls/flippers so an in-plane hit keeps
-    // its speed instead of dead-stopping (this is what made the ball feel slow
-    // after touching a flipper).
+    // its speed instead of dead-stopping.
     world.set_restitution(0.35);
 
     let editor = state::EditorState {
