@@ -10,4 +10,5 @@ pub mod joint;
 pub mod log;
 pub mod math_utils;
 pub mod metaball;
+pub mod sweep;
 pub mod world;

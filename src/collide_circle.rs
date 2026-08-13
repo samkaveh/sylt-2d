@@ -2,12 +2,18 @@ use crate::arbiter::{Contact, ContactInfo, Edges, FeaturePair};
 use crate::body::Body;
 use crate::math_utils::Vec2;
 
+/// Contact emission tolerance. Contacts are generated when surfaces are within
+/// this distance of touching so that a body landing exactly on a surface still
+/// produces a manifold (avoids float-rounding gaps that let the solver ignore
+/// the impact).
+const CONTACT_SLOP: f32 = 0.01;
+
 pub fn collide_circle_circle(contacts: &mut Vec<Contact>, body_a: &Body, body_b: &Body) -> i32 {
     let diff = body_b.position - body_a.position;
     let dist_sq = diff.dot(diff);
     let radius_sum = body_a.radius + body_b.radius;
 
-    if dist_sq > radius_sum * radius_sum {
+    if dist_sq > (radius_sum + CONTACT_SLOP) * (radius_sum + CONTACT_SLOP) {
         return 0;
     }
 
@@ -23,6 +29,7 @@ pub fn collide_circle_circle(contacts: &mut Vec<Contact>, body_a: &Body, body_b:
         normal,
         separation: dist - radius_sum,
         feature: FeaturePair::new(Edges::default(), 0),
+        restitution: 1.0,
         ..Default::default()
     };
 
@@ -31,6 +38,22 @@ pub fn collide_circle_circle(contacts: &mut Vec<Contact>, body_a: &Body, body_b:
 }
 
 pub fn collide_circle_polygon(contacts: &mut Vec<Contact>, body_a: &Body, body_b: &Body) -> i32 {
+    collide_circle_polygon_with_hint(contacts, body_a, body_b, None)
+}
+
+/// Same as [`collide_circle_polygon`] but hints a preferred contact normal for
+/// the circle-center-inside-polygon case. When the circle's center sits (nearly)
+/// equidistant from two faces (e.g. wedged on the medial axis of a thin flipper),
+/// the closest face can flip frame-to-frame from float noise, making the solver
+/// shove the circle alternately into one face and then the other forever. The
+/// hint biases toward the previous frame's normal so the resolution is
+/// consistent and the circle is ejected in one direction.
+pub fn collide_circle_polygon_with_hint(
+    contacts: &mut Vec<Contact>,
+    body_a: &Body,
+    body_b: &Body,
+    normal_hint: Option<Vec2>,
+) -> i32 {
     let circle_pos = body_a.position;
     let radius = body_a.radius;
 
@@ -58,9 +81,16 @@ pub fn collide_circle_polygon(contacts: &mut Vec<Contact>, body_a: &Body, body_b
     }
 
     if inside {
+        // Hysteresis: prefer the face consistent with the circle's previous
+        // contact normal so a ball wedged between two opposite faces (e.g. on a
+        // thin flipper's medial axis) is pushed out one direction instead of
+        // oscillating forever.
+        let effective_hint = normal_hint.or(body_a.wedge_normal);
+        // Collect every face's resolution and keep the candidates whose
+        // separation is (near-)largest so we can tie-break via the hint.
+        const TIE_EPS: f32 = 0.15;
         let mut best_separation = f32::NEG_INFINITY;
-        let mut best_normal = Vec2::new(0.0, 0.0);
-        let mut best_contact_pos = Vec2::new(0.0, 0.0);
+        let mut candidates: Vec<(f32, Vec2, Vec2)> = Vec::new(); // (sep, normal, contact_pos)
 
         for i in 0..n {
             let v1 = poly.get_vertex(i as isize);
@@ -76,23 +106,54 @@ pub fn collide_circle_polygon(contacts: &mut Vec<Contact>, body_a: &Body, body_b
             let diff = circle_pos - closest;
             let dist = diff.length();
 
-            let edge_len = edge_len_sq.sqrt();
-            let outward = Vec2::new(edge.y / edge_len, -edge.x / edge_len);
-
             let separation = -(dist + radius);
 
             if separation > best_separation {
                 best_separation = separation;
-                best_normal = outward;
-                best_contact_pos = circle_pos + outward * radius;
+                candidates.clear();
+            }
+            if separation >= best_separation - TIE_EPS {
+                let normal = if dist > f32::EPSILON {
+                    (closest - circle_pos) * (1.0 / dist)
+                } else {
+                    Vec2::new(0.0, 1.0)
+                };
+                candidates.push((separation, normal, circle_pos + normal * radius));
             }
         }
 
+        let (_, best_normal, best_contact_pos) = match effective_hint {
+            Some(hint) => {
+                let mut chosen = candidates[0];
+                let mut best_dot = f32::NEG_INFINITY;
+                for &(sep, normal, pos) in &candidates {
+                    let d = normal.dot(hint);
+                    if d > best_dot {
+                        best_dot = d;
+                        chosen = (sep, normal, pos);
+                    }
+                }
+                chosen
+            }
+            None => {
+                let mut chosen = candidates[0];
+                let mut best_so_far = f32::NEG_INFINITY;
+                for &(sep, normal, pos) in &candidates {
+                    if sep > best_so_far {
+                        best_so_far = sep;
+                        chosen = (sep, normal, pos);
+                    }
+                }
+                chosen
+            }
+        };
         let contact = ContactInfo {
             position: best_contact_pos,
             normal: best_normal,
             separation: best_separation,
             feature: FeaturePair::new(Edges::default(), 0),
+            restitution: 0.0,
+            hard_project: true,
             ..Default::default()
         };
 
@@ -122,7 +183,7 @@ pub fn collide_circle_polygon(contacts: &mut Vec<Contact>, body_a: &Body, body_b
     }
 
     let dist = min_dist.sqrt();
-    if dist > radius {
+    if dist > radius + CONTACT_SLOP {
         return 0;
     }
 
@@ -137,6 +198,7 @@ pub fn collide_circle_polygon(contacts: &mut Vec<Contact>, body_a: &Body, body_b
         normal,
         separation: dist - radius,
         feature: FeaturePair::new(Edges::default(), 0),
+        restitution: 1.0,
         ..Default::default()
     };
 

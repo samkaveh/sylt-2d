@@ -287,6 +287,7 @@ pub fn collide(contacts: &mut Vec<Contact>, body_a: &Body, body_b: &Body) -> i32
                 normal,
                 position: clip_point.v - front_normal * separation,
                 feature: clip_point.fp,
+                restitution: 1.0,
                 ..ContactInfo::default()
             };
             contacts.push(Some(contact));

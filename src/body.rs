@@ -18,8 +18,7 @@ impl ConvexPolygon {
     /// Returns the vertex at the given index, handling wraparound.
     pub fn get_vertex(&self, i: isize) -> Vec2 {
         let n = self.get_num_vertices();
-        //let index = ((i % n as isize) + n as isize) as usize % n;
-        let index: usize = ((i + n as isize + 1) % n as isize) as usize;
+        let index = ((i % n as isize) + n as isize) as usize % n;
         self.vertices[index]
     }
 
@@ -53,7 +52,14 @@ impl ConvexPolygon {
     }
     // Orient the vertices counterclockwise
     fn orient_counterclockwise(&mut self) {
-        if self.area() < 0.0 {
+        let n = self.get_num_vertices();
+        let mut area = 0.0;
+        for i in 0..n {
+            let p1 = self.get_vertex(i as isize);
+            let p2 = self.get_vertex((i + 1) as isize);
+            area += p1.x * p2.y - p1.y * p2.x;
+        }
+        if area < 0.0 {
             self.vertices.reverse(); // Reverse the vertex order if the area is negative (clockwise)
         }
     }
@@ -152,7 +158,9 @@ impl ConvexPolygon {
             vertices: self
                 .vertices
                 .iter()
-                .map(|&vertex| rotation_mat * Vec2::new(vertex.x - center.x, vertex.y - center.y))
+                .map(|&vertex| {
+                    rotation_mat * Vec2::new(vertex.x - center.x, vertex.y - center.y) + center
+                })
                 .collect(),
         }
     }
@@ -200,6 +208,15 @@ pub struct Body {
     vertices: Vec<Vec2>,
     pub shape: Shape,
     pub radius: f32,
+    /// Persistent collision normal from the previous step for a circle body.
+    /// Used to break medial-axis ties in circle-vs-polygon so a wedged circle is
+    /// ejected consistently in one direction instead of oscillating between two
+    /// opposite faces of a thin body (e.g. a ball stuck on a flipper).
+    pub wedge_normal: Option<Vec2>,
+    /// Sensor bodies never collide with anything (they still integrate and are
+    /// affected by joints). Useful for particles that should render and be
+    /// anchored but must let other bodies pass through (e.g. liquid blobs).
+    pub sensor: bool,
 }
 
 static BODY_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -246,8 +263,11 @@ impl Body {
             vertices,
             shape: Shape::Box,
             radius: 0.0,
+            wedge_normal: None,
+            sensor: false,
         }
     }
+
     pub fn new_polygon(vertices: Vec<Vec2>, mass: f32) -> Self {
         let mut convex_polygon = ConvexPolygon {
             vertices: vertices.clone(),
@@ -266,6 +286,7 @@ impl Body {
             inv_moi = 0.0;
         }
         let width = convex_polygon.bounding_box();
+        let oriented_vertices = convex_polygon.get_vertices();
 
         let id = BODY_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
@@ -283,9 +304,11 @@ impl Body {
             inv_mass,
             inv_moi,
             moi,
-            vertices,
+            vertices: oriented_vertices,
             shape: Shape::ConvexPolygon,
             radius: 0.0,
+            wedge_normal: None,
+            sensor: false,
         }
     }
 
@@ -324,6 +347,8 @@ impl Body {
             vertices,
             shape: Shape::Circle,
             radius,
+            wedge_normal: None,
+            sensor: false,
         }
     }
 
@@ -331,9 +356,33 @@ impl Body {
         self.force = self.force + force;
     }
 
+    pub fn set_sensor(&mut self, sensor: bool) {
+        self.sensor = sensor;
+    }
+
     pub fn get_polygon(&self) -> ConvexPolygon {
         ConvexPolygon {
             vertices: self.vertices.clone(),
+        }
+    }
+
+    /// Approximate "throw radius" of the body: the farthest distance any surface
+    /// point can be from the body center (or the circle radius for circles).
+    /// Used to estimate how much of the surface moves per radian of rotation,
+    /// so a fast-spinning body can be flagged as a CCD bullet.
+    pub fn max_edge_speed_radius(&self) -> f32 {
+        match self.shape {
+            Shape::Circle => self.radius,
+            _ => {
+                let mut m = 0.0;
+                for v in &self.vertices {
+                    let d = v.length();
+                    if d > m {
+                        m = d;
+                    }
+                }
+                m
+            }
         }
     }
 

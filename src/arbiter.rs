@@ -83,6 +83,16 @@ pub struct ContactInfo {
     pub mass_tangent: f32,
     pub bias: f32,
     pub feature: FeaturePair,
+    /// Multiplier applied to the world restitution at this contact. Set to 0.0
+    /// for a deeply-embedded circle so it settles (gravity rolls it out) instead
+    /// of bouncing forever against a thin body that contains its center.
+    pub restitution: f32,
+    /// When set, the circle's center lies inside the polygon and the solver
+    /// performs a hard positional projection that pushes the circle out through
+    /// the nearest face. Without this a circle fully engulfed by a thin body
+    /// (e.g. a ball wedged on a flipper's medial axis) is caught in a perpetual
+    /// oscillation between two opposite faces.
+    pub hard_project: bool,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -242,6 +252,29 @@ impl Arbiter {
                     let r1 = contact.position - body1.position;
                     let r2 = contact.position - body2.position;
 
+                    // Persist the contact normal on the circle body (if either
+                    // side is a circle) so a ball wedged between two opposite
+                    // faces of a thin body resolves consistently. Stored in the
+                    // same convention collide uses (circle -> polygon): for a
+                    // (Box, Circle) pair the solver normal is flipped, so negate.
+                    if body1.shape == Shape::Circle {
+                        body1.wedge_normal = Some(contact.normal);
+                    } else if body2.shape == Shape::Circle {
+                        body2.wedge_normal = Some(-contact.normal);
+                    }
+
+                    // Hard positional projection: if a circle's center is inside
+                    // the polygon this frame, teleport it out through the nearest
+                    // face so it cannot oscillate forever between opposite faces.
+                    if contact.hard_project {
+                        let eject = -contact.separation + 0.02;
+                        if body1.shape == Shape::Circle {
+                            body1.position = body1.position + contact.normal * eject;
+                        } else if body2.shape == Shape::Circle {
+                            body2.position = body2.position - contact.normal * eject;
+                        }
+                    }
+
                     // pre-compute normal mass , tangent mass, and bias
                     let rn1 = r1.dot(contact.normal);
                     let rn2 = r2.dot(contact.normal);
@@ -289,12 +322,16 @@ impl Arbiter {
                         - body1.velocity
                         - body1.angular_velocity.cross(contact.r1);
 
-                    // Compute normal impulse
+                    // Compute normal impulse.
+                    // Aim for a post-impact separating velocity of -restitution*vn
+                    // (bounce). With restitution=0 this reduces to the standard
+                    // no-bounce result (-vn + bias).
                     let vn = dv.dot(contact.normal);
-                    let mut d_pn = contact.mass_normal * (-vn + contact.bias);
+                    let e = world_context.restitution * contact.restitution;
+                    let mut d_pn = contact.mass_normal * (-(1.0 + e) * vn + contact.bias);
 
                     if world_context.accumulate_impulse {
-                        // Clamp accumulated impulse
+                        // Clamp accumulated impulse (can only push apart, never pull)
                         let pn_0 = contact.pn;
                         contact.pn = f32::max(pn_0 + d_pn, 0.0);
                         d_pn = contact.pn - pn_0;
