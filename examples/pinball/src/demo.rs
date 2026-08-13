@@ -1,8 +1,8 @@
 use crate::board::{enter_editor_mode, enter_play_mode};
 use crate::physics::launch_plunger;
 use crate::state::{
-    BoardElement, DemoPhase, EditTool, ElementKind, FLIPPER_LENGTH, FlipperSide, FluidType,
-    GameMode, Model,
+    BoardElement, DemoPhase, EditTool, ElementKind, FlipperSide, FluidType, GameMode, Model,
+    FLIPPER_LENGTH,
 };
 use crate::util::default_ball_spawn;
 use sylt_2d::math_utils::Vec2;
@@ -166,10 +166,10 @@ pub(crate) fn demo_build_play_board(model: &mut Model) {
 
     // Fluid pools spread across the playfield so the ball encounters each one.
     let pools = [
-        (Vec2::new(-2.5, 6.0), 1.5, FluidType::Water),
-        (Vec2::new(2.0, 7.5), 1.4, FluidType::Slime),
-        (Vec2::new(-4.0, 9.5), 1.3, FluidType::Acid),
-        (Vec2::new(1.0, 3.0), 1.4, FluidType::Lava),
+        (Vec2::new(-2.2, 5.5), 1.6, FluidType::Water),
+        (Vec2::new(2.2, 7.5), 1.5, FluidType::Slime),
+        (Vec2::new(-3.5, 9.5), 1.4, FluidType::Acid),
+        (Vec2::new(0.0, 3.2), 1.5, FluidType::Lava),
     ];
     for (pos, radius, fluid) in pools {
         push(
@@ -318,7 +318,9 @@ pub(crate) fn update_demo(model: &mut Model) {
                 model.elements.clear();
                 demo_build_play_board(model);
                 model.demo.timer = 0.0;
-                model.demo.caption = "Building a full playfield - bumpers, targets, flippers, fluids, soft bridge & chain".to_string();
+                model.demo.caption =
+                    "Building playfield: Water, Slime, Acid & Lava fluid pools + physics targets"
+                        .to_string();
                 model.demo.phase = DemoPhase::SwitchToPlay;
             }
         }
@@ -327,7 +329,8 @@ pub(crate) fn update_demo(model: &mut Model) {
                 model.mode = GameMode::Play;
                 enter_play_mode(model);
                 model.demo.timer = 0.0;
-                model.demo.caption = "Playing - watch the ball bounce off everything".to_string();
+                model.demo.caption =
+                    "Playing - watch ball interactions with SPH fluid pools".to_string();
                 model.demo.phase = DemoPhase::WaitAfterPlay;
             }
         }
@@ -350,32 +353,65 @@ pub(crate) fn update_demo(model: &mut Model) {
         DemoPhase::LaunchBall => {
             launch_plunger(model);
             model.demo.timer = 0.0;
-            model.demo.caption = "Flippers keep the ball alive while it rolls the playfield".to_string();
+            model.demo.caption =
+                "Flippers keep the ball in motion through the fluid pools".to_string();
             model.demo.phase = DemoPhase::BallInPlay;
         }
         DemoPhase::BallInPlay => {
             // Smart AI: track the ball and activate the appropriate flipper.
+            let mut active_fluid: Option<FluidType> = None;
+
             if let Some(ball_id) = model.play.ball_body_id {
-                if let Some(ball_ref) =
-                    model.world.bodies.iter().find(|b| b.borrow().id == ball_id)
+                if let Some(ball_ref) = model.world.bodies.iter().find(|b| b.borrow().id == ball_id)
                 {
                     let ball = ball_ref.borrow();
-                    let _bx = ball.position.x;
-                    let by = ball.position.y;
+                    let bpos = ball.position;
                     let vy = ball.velocity.y;
-                    // Fire both flippers when ball is in the lower half and falling
-                    let in_range = by < 6.0 && by > -2.0;
+
+                    // Check if ball is inside any fluid pool
+                    for elem in &model.elements {
+                        if let ElementKind::FluidPool { radius, fluid, .. } = elem.kind {
+                            if (bpos - elem.position).length() < radius {
+                                active_fluid = Some(fluid);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Fire flippers to maintain ball in play
+                    let in_range = bpos.y < 6.0 && bpos.y > -2.0;
                     let falling = vy < -1.0;
-                    // Both flippers fire when ball is above the flipper zone
-                    // This keeps the ball in play much longer
-                    model.play.flipper_left_active = in_range && (falling || by < 2.0);
-                    model.play.flipper_right_active = in_range && (falling || by < 2.0);
+                    model.play.flipper_left_active = in_range && (falling || bpos.y < 2.0);
+                    model.play.flipper_right_active = in_range && (falling || bpos.y < 2.0);
                 }
             } else {
                 model.play.flipper_left_active = false;
                 model.play.flipper_right_active = false;
             }
-            if model.demo.timer > 8.0 || model.play.game_over {
+
+            // Update dynamic fluid interaction captions
+            if let Some(fluid) = active_fluid {
+                model.demo.caption = match fluid {
+                    FluidType::Water => {
+                        "💧 Water Pool: Hydrodynamic waves, splash bursts & smooth drag".to_string()
+                    }
+                    FluidType::Slime => {
+                        "🟢 Slime Pool: High viscosity dampening & thick fluid resistance"
+                            .to_string()
+                    }
+                    FluidType::Lava => {
+                        "🔥 Lava Pool: High energy heat glow & molten core bursts".to_string()
+                    }
+                    FluidType::Acid => {
+                        "🧪 Acid Pool: Corrosive bubbling & toxic particle splash".to_string()
+                    }
+                };
+            } else if model.demo.timer > 4.0 && model.demo.timer < 10.0 {
+                model.demo.caption =
+                    "Flippers keep the ball in motion through the fluid pools".to_string();
+            }
+
+            if model.demo.timer > 14.0 || model.play.game_over {
                 model.play.flipper_left_active = false;
                 model.play.flipper_right_active = false;
                 model.demo.timer = 0.0;

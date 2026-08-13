@@ -75,37 +75,26 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                 ui.label("Element Properties:");
                 match editor.tool {
                     EditTool::Wall => {
+                        ui.add(egui::Slider::new(&mut editor.wall_width, 0.5..=10.0).text("Width"));
                         ui.add(
-                            egui::Slider::new(&mut editor.wall_width, 0.5..=10.0)
-                                .text("Width"),
-                        );
-                        ui.add(
-                            egui::Slider::new(&mut editor.wall_height, 0.2..=5.0)
-                                .text("Height"),
+                            egui::Slider::new(&mut editor.wall_height, 0.2..=5.0).text("Height"),
                         );
                     }
                     EditTool::Bumper => {
                         ui.add(
-                            egui::Slider::new(&mut editor.bumper_radius, 0.3..=2.0)
-                                .text("Radius"),
+                            egui::Slider::new(&mut editor.bumper_radius, 0.3..=2.0).text("Radius"),
                         );
                         ui.add(
-                            egui::Slider::new(&mut editor.bumper_boost, 3.0..=35.0)
-                                .text("Boost"),
+                            egui::Slider::new(&mut editor.bumper_boost, 3.0..=35.0).text("Boost"),
                         );
                         ui.add(
-                            egui::Slider::new(&mut editor.bumper_score, 50..=1000)
-                                .text("Score"),
+                            egui::Slider::new(&mut editor.bumper_score, 50..=1000).text("Score"),
                         );
                     }
                     EditTool::Chain => {
+                        ui.add(egui::Slider::new(&mut editor.chain_links, 2..=20).text("Links"));
                         ui.add(
-                            egui::Slider::new(&mut editor.chain_links, 2..=20)
-                                .text("Links"),
-                        );
-                        ui.add(
-                            egui::Slider::new(&mut editor.chain_length, 1.0..=10.0)
-                                .text("Length"),
+                            egui::Slider::new(&mut editor.chain_length, 1.0..=10.0).text("Length"),
                         );
                         ui.add(
                             egui::Slider::new(&mut editor.chain_end_mass, 5.0..=50.0)
@@ -114,8 +103,7 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                     }
                     EditTool::FluidPool => {
                         ui.add(
-                            egui::Slider::new(&mut editor.fluid_radius, 0.5..=5.0)
-                                .text("Radius"),
+                            egui::Slider::new(&mut editor.fluid_radius, 0.5..=5.0).text("Radius"),
                         );
                         ui.add(
                             egui::Slider::new(&mut editor.fluid_viscosity, 0.1..=3.0)
@@ -139,8 +127,7 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                     }
                     EditTool::SoftBridge => {
                         ui.add(
-                            egui::Slider::new(&mut editor.bridge_segments, 3..=20)
-                                .text("Segments"),
+                            egui::Slider::new(&mut editor.bridge_segments, 3..=20).text("Segments"),
                         );
                         ui.add(
                             egui::Slider::new(&mut editor.bridge_softness, 0.005..=0.1)
@@ -149,22 +136,18 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                     }
                     EditTool::Target => {
                         ui.add(
-                            egui::Slider::new(&mut editor.target_width, 0.5..=3.0)
-                                .text("Width"),
+                            egui::Slider::new(&mut editor.target_width, 0.5..=3.0).text("Width"),
                         );
                         ui.add(
-                            egui::Slider::new(&mut editor.target_height, 0.1..=1.0)
-                                .text("Height"),
+                            egui::Slider::new(&mut editor.target_height, 0.1..=1.0).text("Height"),
                         );
                         ui.add(
-                            egui::Slider::new(&mut editor.target_score, 50..=2000)
-                                .text("Score"),
+                            egui::Slider::new(&mut editor.target_score, 50..=2000).text("Score"),
                         );
                     }
                     EditTool::Drain => {
                         ui.add(
-                            egui::Slider::new(&mut editor.drain_width, 1.0..=10.0)
-                                .text("Width"),
+                            egui::Slider::new(&mut editor.drain_width, 1.0..=10.0).text("Width"),
                         );
                     }
                     _ => {
@@ -209,10 +192,7 @@ pub(crate) fn draw_editor_panel(model: &mut Model) -> EditorPanelActions {
                 ui.checkbox(&mut settings.show_grid, "Show Grid");
                 ui.checkbox(&mut settings.snap_to_grid, "Snap to Grid");
                 if settings.snap_to_grid {
-                    ui.add(
-                        egui::Slider::new(&mut settings.grid_size, 0.1..=1.0)
-                            .text("Grid Size"),
-                    );
+                    ui.add(egui::Slider::new(&mut settings.grid_size, 0.1..=1.0).text("Grid Size"));
                 }
                 ui.checkbox(&mut settings.show_contacts, "Show Contacts");
                 ui.add(egui::Slider::new(&mut settings.scale, 10.0..=50.0).text("Zoom"));
@@ -271,15 +251,11 @@ pub(crate) fn draw_play_panel(model: &mut Model) -> PlayPanelActions {
                     for i in 0..3 {
                         let filled = (i as u32) < play.balls_remaining;
                         let icon = if filled { "●" } else { "○" };
-                        ui.label(
-                            egui::RichText::new(icon)
-                                .size(18.0)
-                                .color(if filled {
-                                    egui::Color32::LIGHT_BLUE
-                                } else {
-                                    egui::Color32::DARK_GRAY
-                                }),
-                        );
+                        ui.label(egui::RichText::new(icon).size(18.0).color(if filled {
+                            egui::Color32::LIGHT_BLUE
+                        } else {
+                            egui::Color32::DARK_GRAY
+                        }));
                     }
                 });
                 if play.ball_save_timer > 0.0 {

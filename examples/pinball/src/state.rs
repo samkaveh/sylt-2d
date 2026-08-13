@@ -179,6 +179,7 @@ pub(crate) struct PlayState {
     pub(crate) chain_anchor_id: Option<usize>,
     pub(crate) metaball_bodies: Vec<usize>,
     pub(crate) metaball_colors: HashMap<usize, [f32; 3]>,
+    pub(crate) metaball_fluid_types: HashMap<usize, FluidType>,
     pub(crate) fluid_particle_ids: Vec<usize>,
     pub(crate) fluid_time: f32,
     pub(crate) fluid_drag_active: bool,

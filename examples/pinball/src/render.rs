@@ -1,10 +1,10 @@
 use crate::state::{
-    BALL_RADIUS, BALL_TRAIL_LENGTH, COMBO_WINDOW, BoardElement, EditTool, FLIPPER_UP_DELTA,
-    FlipperSide, GameMode, Model, PLUNGER_MAX_CHARGE,
+    BoardElement, EditTool, FlipperSide, GameMode, Model, BALL_RADIUS, BALL_TRAIL_LENGTH,
+    COMBO_WINDOW, FLIPPER_UP_DELTA, PLUNGER_MAX_CHARGE,
 };
 use crate::util::{rotate_vec, snap_to_grid};
 use nannou::prelude::*;
-use sylt_2d::body::{Body, Shape};
+use sylt_2d::body::Shape;
 use sylt_2d::math_utils::Vec2;
 use sylt_2d::metaball::{
     cluster_metaballs, compute_metaball_bounds, marching_squares_debug, Metaball,
@@ -92,6 +92,188 @@ pub(crate) fn view(app: &App, model: &Model, frame: Frame) {
                 .x_y(pos.x + vel.x * t, pos.y + vel.y * t)
                 .w_h(size, size)
                 .color(rgba(1.0, 0.9, 0.4, alpha));
+        }
+    }
+
+    // Render fluid pool isosurfaces BEHIND the pinball, flippers, and walls
+    if !model.play.metaball_bodies.is_empty() {
+        let metaballs: Vec<Metaball> = model
+            .world
+            .iter_bodies()
+            .filter(|b| model.play.metaball_bodies.contains(&b.id))
+            .map(|b| Metaball::new(Vec2::new(b.position.x, b.position.y), b.radius, 1.0))
+            .collect();
+
+        if !metaballs.is_empty() {
+            let clusters = cluster_metaballs(&metaballs, model.settings.metaball_threshold);
+            let time = model.play.fluid_time;
+
+            for cluster in &clusters {
+                let (bounds_min, bounds_max) = compute_metaball_bounds(
+                    &cluster.metaballs,
+                    model.settings.metaball_threshold,
+                    2.0,
+                );
+
+                let (cluster_color, fluid_type) = cluster
+                    .metaballs
+                    .iter()
+                    .find_map(|m| {
+                        model
+                            .world
+                            .iter_bodies()
+                            .find(|b| {
+                                model.play.metaball_bodies.contains(&b.id)
+                                    && (b.position - m.position).length() < 0.01
+                            })
+                            .and_then(|b| {
+                                let c = model.play.metaball_colors.get(&b.id).copied()?;
+                                let ft = model
+                                    .play
+                                    .metaball_fluid_types
+                                    .get(&b.id)
+                                    .copied()
+                                    .unwrap_or(crate::state::FluidType::Water);
+                                Some((c, ft))
+                            })
+                    })
+                    .unwrap_or(([0.2, 0.6, 0.95], crate::state::FluidType::Water));
+
+                // Primary fluid surface contour (outer boundary)
+                let primary_ms = marching_squares_debug(
+                    &cluster.metaballs,
+                    bounds_min,
+                    bounds_max,
+                    model.settings.metaball_resolution,
+                    model.settings.metaball_threshold,
+                    &[],
+                );
+
+                // Secondary inner contour (core depth layer)
+                let inner_threshold = model.settings.metaball_threshold * 1.8;
+                let inner_ms = marching_squares_debug(
+                    &cluster.metaballs,
+                    bounds_min,
+                    bounds_max,
+                    model.settings.metaball_resolution,
+                    inner_threshold,
+                    &[],
+                );
+
+                let (base_alpha, stroke_color, inner_alpha, glow_color) = match fluid_type {
+                    crate::state::FluidType::Water => (
+                        0.65,
+                        rgba(0.7, 0.9, 1.0, 0.9),
+                        0.35,
+                        rgba(0.1, 0.4, 0.8, 0.4),
+                    ),
+                    crate::state::FluidType::Slime => (
+                        0.80,
+                        rgba(0.6, 1.0, 0.4, 0.95),
+                        0.45,
+                        rgba(0.2, 0.6, 0.1, 0.5),
+                    ),
+                    crate::state::FluidType::Lava => (
+                        0.85,
+                        rgba(1.0, 0.8, 0.2, 0.95),
+                        0.55,
+                        rgba(1.0, 0.2, 0.0, 0.6),
+                    ),
+                    crate::state::FluidType::Acid => (
+                        0.75,
+                        rgba(0.9, 1.0, 0.3, 0.95),
+                        0.40,
+                        rgba(0.5, 0.8, 0.0, 0.5),
+                    ),
+                };
+
+                // 1. Ambient outer glow / refraction halo
+                for poly in &primary_ms.polygons {
+                    if poly.len() >= 3 {
+                        draw.polygon()
+                            .x_y(0.0, 0.0)
+                            .color(rgba(
+                                cluster_color[0],
+                                cluster_color[1],
+                                cluster_color[2],
+                                base_alpha * 0.4,
+                            ))
+                            .stroke(glow_color)
+                            .stroke_weight(0.12)
+                            .points(poly.clone());
+                    }
+                }
+
+                // 2. Base liquid body fill with crisp boundary stroke
+                for poly in &primary_ms.polygons {
+                    if poly.len() >= 3 {
+                        draw.polygon()
+                            .x_y(0.0, 0.0)
+                            .color(rgba(
+                                cluster_color[0],
+                                cluster_color[1],
+                                cluster_color[2],
+                                base_alpha,
+                            ))
+                            .stroke(stroke_color)
+                            .stroke_weight(0.05)
+                            .points(poly.clone());
+                    }
+                }
+
+                // 3. Inner dense fluid core (depth effect)
+                for poly in &inner_ms.polygons {
+                    if poly.len() >= 3 {
+                        draw.polygon()
+                            .x_y(0.0, 0.0)
+                            .color(rgba(
+                                (cluster_color[0] * 1.2).min(1.0),
+                                (cluster_color[1] * 1.2).min(1.0),
+                                (cluster_color[2] * 1.2).min(1.0),
+                                inner_alpha,
+                            ))
+                            .points(poly.clone());
+                    }
+                }
+
+                // 4. Liquid surface specular glints and bubbles
+                for mb in &cluster.metaballs {
+                    match fluid_type {
+                        crate::state::FluidType::Water => {
+                            let shimmer = (time * 3.0 + mb.position.x * 2.0).sin() * 0.03;
+                            draw.ellipse()
+                                .x_y(mb.position.x - 0.05, mb.position.y + 0.08)
+                                .w_h(0.14 + shimmer, 0.07)
+                                .color(rgba(1.0, 1.0, 1.0, 0.45));
+                        }
+                        crate::state::FluidType::Lava => {
+                            let pulse = (time * 4.0 + mb.position.x * 1.5).sin().abs() * 0.1;
+                            draw.ellipse()
+                                .x_y(mb.position.x, mb.position.y)
+                                .w_h(0.2 + pulse, 0.2 + pulse)
+                                .color(rgba(1.0, 0.9, 0.3, 0.6));
+                        }
+                        crate::state::FluidType::Acid => {
+                            let bubble = (time * 5.0 + mb.position.y * 3.0).sin();
+                            if bubble > 0.4 {
+                                draw.ellipse()
+                                    .x_y(
+                                        mb.position.x + 0.04 * bubble,
+                                        mb.position.y + 0.06 * bubble,
+                                    )
+                                    .w_h(0.09, 0.09)
+                                    .color(rgba(0.9, 1.0, 0.5, 0.7));
+                            }
+                        }
+                        crate::state::FluidType::Slime => {
+                            draw.ellipse()
+                                .x_y(mb.position.x - 0.04, mb.position.y + 0.06)
+                                .w_h(0.12, 0.08)
+                                .color(rgba(0.8, 1.0, 0.6, 0.35));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -290,16 +472,8 @@ pub(crate) fn view(app: &App, model: &Model, frame: Frame) {
                         .w_h(body.radius * 0.25, body.radius * 0.2)
                         .color(rgba(0.3, 0.4, 0.6, 0.5));
                 } else if model.play.metaball_bodies.contains(&body.id) {
-                    let col = model
-                        .play
-                        .metaball_colors
-                        .get(&body.id)
-                        .copied()
-                        .unwrap_or([0.2, 0.6, 0.9]);
-                    draw.ellipse()
-                        .x_y(body.position.x, body.position.y)
-                        .w_h(body.radius * 2.0, body.radius * 2.0)
-                        .color(rgba(col[0], col[1], col[2], 0.35));
+                    // Metaball particle bodies are rendered seamlessly as fluid isosurfaces
+                    // in the metaball pass below, so we don't draw individual circles here.
                 } else if body.inv_mass == 0.0 {
                     // Bumper Rendering with enhanced glow
                     let position = body.position;
@@ -314,11 +488,7 @@ pub(crate) fn view(app: &App, model: &Model, frame: Frame) {
 
                     let (b_col, ring_col, glow_alpha) = if is_flashing {
                         let pulse = (flash_timer * 12.0).sin().abs();
-                        (
-                            rgb(1.0, 1.0, 0.6),
-                            rgb(1.0, 0.9, 0.3),
-                            0.35 + 0.25 * pulse,
-                        )
+                        (rgb(1.0, 1.0, 0.6), rgb(1.0, 0.9, 0.3), 0.35 + 0.25 * pulse)
                     } else {
                         (rgb(0.95, 0.35, 0.2), rgb(1.0, 0.6, 0.2), 0.15)
                     };
@@ -346,7 +516,10 @@ pub(crate) fn view(app: &App, model: &Model, frame: Frame) {
                         .color(ring_col);
 
                     draw.ellipse()
-                        .x_y(position.x - body.radius * 0.25, position.y + body.radius * 0.25)
+                        .x_y(
+                            position.x - body.radius * 0.25,
+                            position.y + body.radius * 0.25,
+                        )
                         .w_h(body.radius * 0.5, body.radius * 0.5)
                         .color(rgba(1.0, 1.0, 1.0, 0.5));
                 } else {
@@ -354,75 +527,6 @@ pub(crate) fn view(app: &App, model: &Model, frame: Frame) {
                         .x_y(body.position.x, body.position.y)
                         .w_h(body.radius * 2.0, body.radius * 2.0)
                         .color(rgb(0.5, 0.5, 0.6));
-                }
-            }
-        }
-    }
-
-    if !model.play.metaball_bodies.is_empty() {
-        let metaballs: Vec<Metaball> = model
-            .world
-            .iter_bodies()
-            .filter(|b| model.play.metaball_bodies.contains(&b.id))
-            .map(|b| Metaball::new(Vec2::new(b.position.x, b.position.y), b.radius, 1.0))
-            .collect();
-
-        if !metaballs.is_empty() {
-            let clusters = cluster_metaballs(&metaballs, model.settings.metaball_threshold);
-            for cluster in &clusters {
-                let (bounds_min, bounds_max) = compute_metaball_bounds(
-                    &cluster.metaballs,
-                    model.settings.metaball_threshold,
-                    2.0,
-                );
-
-                let cluster_color = cluster
-                    .metaballs
-                    .iter()
-                    .find_map(|m| {
-                        model
-                            .world
-                            .iter_bodies()
-                            .find(|b| {
-                                model.play.metaball_bodies.contains(&b.id)
-                                    && (b.position - m.position).length() < 0.01
-                            })
-                            .and_then(|b| model.play.metaball_colors.get(&b.id).copied())
-                    })
-                    .unwrap_or([0.2, 0.6, 0.95]);
-
-                let obstacle_ids: Vec<usize> = model.play.metaball_bodies.clone();
-                let obstacles: Vec<Body> = model
-                    .world
-                    .iter_bodies()
-                    .filter(|b| !obstacle_ids.contains(&b.id))
-                    .map(|b| (*b).clone())
-                    .collect();
-
-                let debug = marching_squares_debug(
-                    &cluster.metaballs,
-                    bounds_min,
-                    bounds_max,
-                    model.settings.metaball_resolution,
-                    model.settings.metaball_threshold,
-                    &obstacles,
-                );
-
-                for poly in &debug.polygons {
-                    if poly.len() >= 3 {
-                        draw.polygon()
-                            .x_y(0.0, 0.0)
-                            .color(rgba(cluster_color[0], cluster_color[1], cluster_color[2], 0.55))
-                            .points(poly.clone());
-                    }
-                }
-                for chain_poly in &debug.open_chains {
-                    if chain_poly.len() >= 3 {
-                        draw.polygon()
-                            .x_y(0.0, 0.0)
-                            .color(rgba(cluster_color[0], cluster_color[1], cluster_color[2], 0.35))
-                            .points(chain_poly.clone());
-                    }
                 }
             }
         }

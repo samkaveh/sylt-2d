@@ -194,12 +194,7 @@ fn spawn_pool(world: &mut World, center: Vec2, radius: f32, cfg: &Config) {
         }
     }
     for p in &particles {
-        let mut jj = Joint::new(
-            hub.clone(),
-            p.clone(),
-            (p.position + center) * 0.5,
-            world,
-        );
+        let mut jj = Joint::new(hub.clone(), p.clone(), (p.position + center) * 0.5, world);
         jj.softness = cfg.anchor_softness;
         jj.bias_factor = bias;
         world.add_joint(jj);

@@ -9,7 +9,9 @@ mod util;
 
 use crate::board::enter_play_mode;
 use crate::demo::update_demo;
-use crate::physics::{animate_fluid_particles, apply_fluid_drag, apply_flippers, apply_plunger, detect_scoring};
+use crate::physics::{
+    animate_fluid_particles, apply_flippers, apply_fluid_drag, apply_plunger, detect_scoring,
+};
 use crate::render::view;
 use crate::state::{DemoPhase, EditTool, EguiSettings, FluidType, GameMode, Model, PlayState};
 use crate::ui::{draw_editor_panel, draw_play_panel};
@@ -88,6 +90,7 @@ fn model(app: &App) -> Model {
         chain_anchor_id: None,
         metaball_bodies: Vec::new(),
         metaball_colors: std::collections::HashMap::new(),
+        metaball_fluid_types: std::collections::HashMap::new(),
         fluid_particle_ids: Vec::new(),
         fluid_time: 0.0,
         fluid_drag_active: false,

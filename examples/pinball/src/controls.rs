@@ -1,10 +1,16 @@
 use crate::board::{enter_editor_mode, enter_play_mode};
 use crate::physics::launch_plunger;
-use crate::state::{BoardElement, EditTool, ElementKind, FLIPPER_LENGTH, FlipperSide, GameMode, Model};
+use crate::state::{
+    BoardElement, EditTool, ElementKind, FlipperSide, GameMode, Model, FLIPPER_LENGTH,
+};
 use crate::util::{element_hit, rotation_handle_pos, snap_to_grid};
 use nannou::prelude::*;
 
-pub(crate) fn raw_window_event(_app: &App, model: &mut Model, event: &nannou::winit::event::WindowEvent) {
+pub(crate) fn raw_window_event(
+    _app: &App,
+    model: &mut Model,
+    event: &nannou::winit::event::WindowEvent,
+) {
     model.egui.handle_raw_event(event);
 }
 

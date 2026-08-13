@@ -1,4 +1,6 @@
-use crate::state::{BALL_RADIUS, BoardElement, EguiSettings, ElementKind, FLIPPER_WIDTH, FlipperSide};
+use crate::state::{
+    BoardElement, EguiSettings, ElementKind, FlipperSide, BALL_RADIUS, FLIPPER_WIDTH,
+};
 use nannou::prelude::*;
 use sylt_2d::math_utils::Vec2;
 

@@ -1,6 +1,6 @@
 use crate::state::{
-    BALL_RADIUS, BALL_SAVE_DURATION, FLIPPER_LENGTH, FLIPPER_UP_DELTA, FLIPPER_WIDTH,
-    BoardElement, ElementKind, FlipperSide, FluidType, Model,
+    BoardElement, ElementKind, FlipperSide, FluidType, Model, BALL_RADIUS, BALL_SAVE_DURATION,
+    FLIPPER_LENGTH, FLIPPER_UP_DELTA, FLIPPER_WIDTH,
 };
 use crate::util::default_ball_spawn;
 use sylt_2d::body::Body;
@@ -33,87 +33,48 @@ pub(crate) fn add_plunger(model: &mut Model) {
 }
 
 pub(crate) fn spawn_fluid_pool(model: &mut Model, center: Vec2, radius: f32, fluid: FluidType) {
-    // A fluid pool is a dense cluster of small, very light particle bodies that
-    // are SENSORS: they collide with each other (so they jostle into a liquid
-    // blob) but never block the pinball, which is calved straight through them.
-    // They are anchored to a loose centre hub (no stiff neighbour links) so the
-    // blob stays in its region yet parts readily around the ball.
-    let particle_r = 0.13;
-    let spacing = 0.5;
+    // A fluid pool consists of dynamic particle bodies that jostle under SPH fluid
+    // dynamics (density pressure, surface tension, and drag). They are free-floating
+    // so they slosh, wave, and flow naturally around the pinball.
+    let particle_r = 0.22;
+    let spacing = 0.38;
     let color = match fluid {
         FluidType::Water => [0.2, 0.55, 0.95],
         FluidType::Slime => [0.3, 0.85, 0.25],
         FluidType::Lava => [0.95, 0.4, 0.12],
         FluidType::Acid => [0.7, 0.9, 0.1],
     };
-    // Light so the ball knocks them aside; slight per-fluid density.
     let particle_mass = match fluid {
-        FluidType::Water => 0.04,
-        FluidType::Slime => 0.05,
-        FluidType::Lava => 0.06,
-        FluidType::Acid => 0.045,
+        FluidType::Water => 0.05,
+        FluidType::Slime => 0.08,
+        FluidType::Lava => 0.10,
+        FluidType::Acid => 0.06,
     };
 
-    // Loose centre-anchor springing so the blob stays put but sloshes.
-    let frequency_hz = 1.5;
-    let damping_ratio = 0.2;
-    let omega = 2.0 * std::f32::consts::PI * frequency_hz;
-    let d = 2.0 * particle_mass * damping_ratio * omega;
-    let k = particle_mass * omega * omega;
-    let time_step = model.time_step;
-    let bias_factor = time_step * k / (d + time_step * k);
-
-    // Static centre hub holds the blob in place. It is a sensor too so it never
-    // blocks the pinball (without this the ball would stop at the pool centre).
-    let mut anchor = Body::new(Vec2::new(0.05, 0.05), f32::MAX);
-    anchor.position = center;
-    anchor.set_sensor(true);
-    model.play.metaball_bodies.push(anchor.id);
-    model.play.metaball_colors.insert(anchor.id, color);
-    model.world.add_body(anchor.clone());
-
-    let mut x = -radius;
-    let mut particles: Vec<Body> = Vec::new();
+    let mut x = -radius + particle_r;
     let mut row = 0i32;
-    while x <= radius {
+    while x <= radius - particle_r {
         let y_offset = if row % 2 == 0 { 0.0 } else { spacing * 0.5 };
-        let mut y = -radius;
-        while y <= radius {
+        let mut y = -radius + particle_r;
+        while y <= radius - particle_r {
             let p = Vec2::new(x, y + y_offset);
-            if p.length() <= radius {
+            if p.length() <= radius - particle_r {
                 let mut body = Body::new_circle(particle_r, particle_mass);
                 body.position = center + p;
-                body.friction = 0.05;
-                // Sensors collide only with other sensors: the particles bump
-                // each other into a liquid jostle, but the pinball passes
-                // straight through them (parted by displacement instead).
+                body.friction = 0.02;
+                // Sensors collide with sensors to jostle each other into fluid volumes,
+                // while pinball momentum is transferred via hydrodynamic SPH forces.
                 body.set_sensor(true);
                 model.play.metaball_bodies.push(body.id);
                 model.play.metaball_colors.insert(body.id, color);
+                model.play.metaball_fluid_types.insert(body.id, fluid);
                 model.play.fluid_particle_ids.push(body.id);
                 model.world.add_body(body.clone());
-                particles.push(body);
             }
             y += spacing;
         }
         x += spacing * 0.866;
         row += 1;
-    }
-
-    // No stiff neighbour links — just anchor every particle loosely to the
-    // centre hub so the blob reads as connected but yields when parted.
-    for particle in &particles {
-        let mut joint = Joint::new(
-            anchor.clone(),
-            particle.clone(),
-            (particle.position + center) * 0.5,
-            &model.world,
-        );
-        // Loose anchor: holds the blob in its region while still letting the
-        // particles slosh around (a stiff anchor would freeze the outline).
-        joint.softness = 0.45;
-        joint.bias_factor = bias_factor;
-        model.world.add_joint(joint);
     }
 }
 
@@ -260,6 +221,20 @@ pub(crate) fn populate_default_board(model: &mut Model) {
         rotation: 0.0,
         kind: ElementKind::BallSpawn,
         color: [0.9, 0.9, 0.9],
+    });
+    model.next_id += 1;
+
+    // Fluid Pool in mid-field
+    model.elements.push(BoardElement {
+        id: model.next_id,
+        position: Vec2::new(0.0, 7.5),
+        rotation: 0.0,
+        kind: ElementKind::FluidPool {
+            radius: 2.2,
+            fluid: FluidType::Water,
+            viscosity: 0.8,
+        },
+        color: [0.2, 0.55, 0.95],
     });
     model.next_id += 1;
 
@@ -506,6 +481,7 @@ pub(crate) fn enter_play_mode(model: &mut Model) {
     model.play.chain_anchor_id = None;
     model.play.metaball_bodies.clear();
     model.play.metaball_colors.clear();
+    model.play.metaball_fluid_types.clear();
     model.play.fluid_particle_ids.clear();
     model.play.fluid_drag_active = false;
     model.play.bumper_flash_timers.clear();
@@ -538,6 +514,7 @@ pub(crate) fn enter_editor_mode(model: &mut Model) {
     model.play.chain_anchor_id = None;
     model.play.metaball_bodies.clear();
     model.play.metaball_colors.clear();
+    model.play.metaball_fluid_types.clear();
     model.play.fluid_particle_ids.clear();
     if model.elements.is_empty() {
         populate_default_board(model);
