@@ -367,7 +367,12 @@ pub(crate) fn apply_flippers(model: &mut Model) {
 
     if let Some(left_id) = model.play.flipper_left_id {
         if let Some(body_ref) = model.world.bodies.iter().find(|b| b.borrow().id == left_id) {
-            drive_flipper(&mut body_ref.borrow_mut(), target_left, left_offset);
+            drive_flipper(
+                &mut body_ref.borrow_mut(),
+                target_left,
+                left_offset,
+                model.time_step,
+            );
         }
     }
     if let Some(right_id) = model.play.flipper_right_id {
@@ -377,7 +382,12 @@ pub(crate) fn apply_flippers(model: &mut Model) {
             .iter()
             .find(|b| b.borrow().id == right_id)
         {
-            drive_flipper(&mut body_ref.borrow_mut(), target_right, right_offset);
+            drive_flipper(
+                &mut body_ref.borrow_mut(),
+                target_right,
+                right_offset,
+                model.time_step,
+            );
         }
     }
 }
@@ -392,14 +402,15 @@ pub(crate) fn apply_flippers(model: &mut Model) {
 /// frame (felt as heaviness/sluggishness); keeping the pivot point stationary
 /// gives the joint nothing to fight, so the flipper snaps crisply to its stop.
 /// A tight dead-zone pins it exactly at rest and full-up.
-pub(crate) fn drive_flipper(body: &mut Body, target: f32, pivot_offset: Vec2) {
+pub(crate) fn drive_flipper(body: &mut Body, target: f32, pivot_offset: Vec2, time_step: f32) {
     const PROPORTIONAL_GAIN: f32 = 60.0;
-    const MAX_SPEED: f32 = 42.0;
+    const MAX_PER_FRAME: f32 = 0.25;
     const SETTLE_ANGLE: f32 = 0.03;
     const SETTLE_SPEED: f32 = 0.25;
 
     let err = target - body.rotation;
-    let av = (err * PROPORTIONAL_GAIN).clamp(-MAX_SPEED, MAX_SPEED);
+    let max_av = MAX_PER_FRAME / time_step.max(1e-4);
+    let av = (err * PROPORTIONAL_GAIN).clamp(-max_av, max_av);
     body.angular_velocity = av;
 
     let pivot = body.position - rotate_vec(pivot_offset, body.rotation);

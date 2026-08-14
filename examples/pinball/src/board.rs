@@ -103,15 +103,23 @@ pub(crate) fn add_cabinet_walls(model: &mut Model) {
     plunger_divider.friction = 0.05;
     model.world.add_body(plunger_divider);
 
-    // Top Main Curved Arch using smooth convex polygon segments
+    // Top Main Curved Arch using overlapping convex polygon segments.
+    // Each segment's angular span is widened so adjacent segments overlap; a
+    // high-speed ball hitting the joint between two segments then lands on the
+    // *body* of a neighbor instead of threading through a shared-corner crack.
+    // The arch is also kept thick enough that the outer shell is never the
+    // thinnest part a fast ball could cross in a single step.
     let arch_center = Vec2::new(-0.5, 17.0);
     let num_segments = 12;
-    let radius_outer = 8.8;
+    let radius_outer = 9.4;
     let radius_inner = 8.2;
+    let seg_span = std::f32::consts::PI / num_segments as f32;
+    let overlap_factor = 1.6;
 
     for i in 0..num_segments {
-        let theta1 = std::f32::consts::PI * (i as f32 / num_segments as f32);
-        let theta2 = std::f32::consts::PI * ((i + 1) as f32 / num_segments as f32);
+        let theta_mid = std::f32::consts::PI * (i as f32 + 0.5) / num_segments as f32;
+        let theta1 = theta_mid - seg_span * overlap_factor / 2.0;
+        let theta2 = theta_mid + seg_span * overlap_factor / 2.0;
 
         let p1_inner =
             arch_center + Vec2::new(radius_inner * theta1.cos(), radius_inner * theta1.sin());
@@ -129,17 +137,29 @@ pub(crate) fn add_cabinet_walls(model: &mut Model) {
     }
 
     // Slanted Lower Inlane Guides (guiding ball to flippers)
-    // Left Inlane Guide
-    let mut left_inlane = Body::new(Vec2::new(6.5, 0.5), f32::MAX);
-    left_inlane.position = Vec2::new(-6.2, 2.2);
-    left_inlane.rotation = -0.55;
+    // Slanted Inlane Guides (guiding ball to flippers). Identical rails: same
+    // thickness, mirrored slopes. Each lower end sits over its own flipper; the
+    // left flipper sits further out than the right, so the rails are placed
+    // relative to their flippers instead of mirrored about the table centre
+    // (mirrored rails would gutter the left ball into the drain). Thickness
+    // 0.8 > ball diameter 0.7 so a fast ball can't straddle the rail. The left
+    // rail's top end is tucked into the left cabinet wall so no wedge pocket
+    // forms between the vertical wall and the rail top.
+    let guide_thickness = 0.8;
+    let guide_angle = 0.55;
+
+    // Left Inlane Guide (lower end over the left flipper's blade root); length
+    // 5.7 so the top end reaches into the left wall body (x <= -8.0).
+    let mut left_inlane = Body::new(Vec2::new(5.7, guide_thickness), f32::MAX);
+    left_inlane.position = Vec2::new(-5.86, 1.99);
+    left_inlane.rotation = -guide_angle;
     left_inlane.friction = 0.1;
     model.world.add_body(left_inlane);
 
     // Right Inlane Guide (leading to right flipper)
-    let mut right_inlane = Body::new(Vec2::new(5.0, 0.5), f32::MAX);
+    let mut right_inlane = Body::new(Vec2::new(5.0, guide_thickness), f32::MAX);
     right_inlane.position = Vec2::new(3.6, 1.8);
-    right_inlane.rotation = 0.55;
+    right_inlane.rotation = guide_angle;
     right_inlane.friction = 0.1;
     model.world.add_body(right_inlane);
 }
